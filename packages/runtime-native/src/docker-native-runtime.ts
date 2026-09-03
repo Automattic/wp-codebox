@@ -34,6 +34,7 @@ export function createDockerNativeRuntimeDriver(dependencies: DockerNativeRuntim
 class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
   private readonly id = `wp-codebox-native-${randomUUID()}`
   private readonly network = `${this.id}-network`
+  private readonly appNetwork = `${this.id}-app-network`
   private readonly database = `${this.id}-db`
   private readonly app = `${this.id}-app`
   private readonly root: string
@@ -60,14 +61,22 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
     await this.runDocker(["version", "--format", "{{.Server.Version}}"])
     await mkdir(this.root, { recursive: true, mode: 0o700 })
     const environment = { ...(spec.runtimeEnv ?? {}), ...resolveRuntimeSecretEnvTargets(spec.secretEnv ?? {}, spec.secretEnvTargets) }
+    // Docker refuses to publish host ports for containers attached only to an
+    // `--internal` network. The database therefore stays on the internal
+    // network, and the app additionally joins a publishable network so the
+    // preview URL is reachable on loopback only.
     await this.runDocker(["network", "create", "--internal", this.network])
+    await this.runDocker(["network", "create", this.appNetwork])
     await this.runDocker(["run", "-d", "--platform", DOCKER_PLATFORM, "--name", this.database, "--network", this.network, "--tmpfs", "/var/lib/mysql:rw,noexec,nosuid,size=256m", "-e", `MARIADB_ROOT_PASSWORD=${this.fixturePassword}`, "-e", "MARIADB_DATABASE=wordpress", "-e", "MARIADB_USER=wordpress", "-e", `MARIADB_PASSWORD=${this.fixturePassword}`, MARIADB_IMAGE])
-    const appArgs = ["run", "-d", "--platform", DOCKER_PLATFORM, "--name", this.app, "--network", this.network, "--publish", "127.0.0.1:0:80/tcp", "-e", "WORDPRESS_DB_HOST=" + this.database, "-e", "WORDPRESS_DB_NAME=wordpress", "-e", "WORDPRESS_DB_USER=wordpress", "-e", `WORDPRESS_DB_PASSWORD=${this.fixturePassword}`, "-e", "WORDPRESS_CONFIG_EXTRA=define('WP_CODEBOX_FIXTURE_AUTH', true);", "-e", "PHP_INI_SCAN_DIR=/usr/local/etc/php/conf.d", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--entrypoint", "bash"]
+    const appArgs = ["run", "-d", "--platform", DOCKER_PLATFORM, "--name", this.app, "--network", this.appNetwork, "--publish", "127.0.0.1:0:80/tcp", "-e", "WORDPRESS_DB_HOST=" + this.database, "-e", "WORDPRESS_DB_NAME=wordpress", "-e", "WORDPRESS_DB_USER=wordpress", "-e", `WORDPRESS_DB_PASSWORD=${this.fixturePassword}`, "-e", "WORDPRESS_CONFIG_EXTRA=define('WP_CODEBOX_FIXTURE_AUTH', true);", "-e", "PHP_INI_SCAN_DIR=/usr/local/etc/php/conf.d", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--entrypoint", "bash"]
     for (const [name, value] of Object.entries(environment)) appArgs.push("-e", `${name}=${value}`)
     // Apache's prefork MPM has two permanent child workers; OPcache stays in each worker.
     appArgs.push(WORDPRESS_IMAGE, "-lc", "printf '%s\\n' 'opcache.enable=1' 'opcache.enable_cli=1' 'opcache.validate_timestamps=0' 'StartServers 2' 'MinSpareServers 2' 'MaxSpareServers 2' > /usr/local/etc/php/conf.d/zz-codebox-opcache.ini && sed -i 's/StartServers .*/StartServers 2/; s/MinSpareServers .*/MinSpareServers 2/; s/MaxSpareServers .*/MaxSpareServers 2/' /etc/apache2/mods-enabled/mpm_prefork.conf && exec /usr/local/bin/docker-entrypoint.sh apache2-foreground")
     const startupStarted = Date.now()
     await this.runDocker(appArgs)
+    // Join the isolated database network after creation; only this container
+    // may reach MariaDB, and MariaDB itself never gains outbound access.
+    await this.runDocker(["network", "connect", this.network, this.app])
     const startup = await this.runDocker(["inspect", "--format", "{{.State.Status}}\n{{.State.ExitCode}}\n{{json .NetworkSettings.Ports}}", this.app])
     const [status = "unknown", exitCode = "unknown", portBindings = ""] = startup.stdout.trim().split("\n")
     const port = this.localhostPort(portBindings)
@@ -165,7 +174,7 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
   async destroy(): Promise<void> {
     if (!this.destroyPromise) this.destroyPromise = (async () => {
       await Promise.all([this.runDocker(["rm", "-f", this.app]).catch(() => undefined), this.runDocker(["rm", "-f", this.database]).catch(() => undefined)])
-      await this.runDocker(["network", "rm", this.network]).catch(() => undefined)
+      await Promise.all([this.runDocker(["network", "rm", this.network]).catch(() => undefined), this.runDocker(["network", "rm", this.appNetwork]).catch(() => undefined)])
       await rm(this.root, { recursive: true, force: true })
       this.destroyed = true
     })()

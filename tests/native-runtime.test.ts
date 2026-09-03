@@ -95,6 +95,14 @@ assert.equal(appRunArgs?.[appRunArgs.indexOf("--publish") + 1], "127.0.0.1:0:80/
 assert.equal(appRunArgs?.[appRunArgs.indexOf("--entrypoint") + 1], "bash")
 assert.match(appRunArgs?.at(-1) ?? "", /exec \/usr\/local\/bin\/docker-entrypoint\.sh apache2-foreground/)
 assert.equal(dockerArgs.some((args) => args[0] === "port"), false)
+// Publishing requires a non-internal network, so the app publishes on its own
+// network and joins the internal database network afterwards.
+const appNetwork = appRunArgs?.[appRunArgs.indexOf("--network") + 1]
+const internalNetwork = dockerArgs.find((args) => args[0] === "network" && args[1] === "create" && args.includes("--internal"))?.at(-1)
+assert.ok(appNetwork && internalNetwork && appNetwork !== internalNetwork)
+assert.ok(dockerArgs.some((args) => args[0] === "network" && args[1] === "create" && !args.includes("--internal") && args.at(-1) === appNetwork))
+assert.ok(dockerArgs.some((args) => args[0] === "network" && args[1] === "connect" && args[2] === internalNetwork))
+assert.equal(dockerArgs.find((args) => args[0] === "run" && args.some((arg) => arg.startsWith("mariadb:11.4@")))?.includes(appNetwork), false)
 await docker.recordProvenance(dockerProvenance)
 await docker.mount({ type: "directory", source: "/fixture", target: "/wordpress/wp-content/plugins/fixture", mode: "readonly" })
 assert.ok(dockerCalls.some((call) => call.includes("cp /fixture/. ") && call.includes(":/var/www/html/wp-content/plugins/fixture")))
@@ -104,7 +112,7 @@ assert.match(benchmark.stdout, /warmNoopPhpMs/)
 const nativeArtifacts = await docker.collectArtifacts()
 assert.match(nativeArtifacts.commandsPath, /files\/native\/commands\.json$/)
 await Promise.all([docker.destroy(), docker.destroy()])
-assert.equal(dockerCalls.filter((call) => call.startsWith("docker network rm ")).length, 1)
+assert.deepEqual(dockerArgs.filter((args) => args[0] === "network" && args[1] === "rm").map((args) => args.at(-1)).sort(), [appNetwork, internalNetwork].sort())
 
 const failedDockerArgs: string[][] = []
 const failedDocker = createDockerNativeRuntimeDriver({
@@ -122,7 +130,7 @@ assert.deepEqual(failedDockerArgs.filter((args) => args[0] === "inspect").map((a
 assert.deepEqual(failedDockerArgs.find((args) => args[0] === "logs")?.slice(0, 3), ["logs", "--tail", "100"])
 await failedDocker.destroy()
 assert.equal(failedDockerArgs.filter((args) => args[0] === "rm" && args[1] === "-f").length, 2)
-assert.equal(failedDockerArgs.filter((args) => args[0] === "network" && args[1] === "rm").length, 1)
+assert.equal(failedDockerArgs.filter((args) => args[0] === "network" && args[1] === "rm").length, 2)
 
 const missingBindingDocker = createDockerNativeRuntimeDriver({
   temporaryDirectory: () => "/tmp",
