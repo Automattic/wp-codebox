@@ -4,7 +4,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/prom
 import { arch, platform } from "node:os"
 import { tmpdir } from "node:os"
 import { createRequire } from "node:module"
-import { dirname, join, resolve } from "node:path"
+import { dirname, join, relative, resolve, sep } from "node:path"
 import { promisify } from "node:util"
 
 import { materializeSharpReleaseRuntime, sharpRuntimePackageNames } from "./lib/materialize-sharp-release-runtime.ts"
@@ -127,11 +127,19 @@ async function copyIfPresent(relativePath: string): Promise<void> {
 }
 
 async function materializePinnedPhpWasmOverlay(root: string): Promise<void> {
-  const source = join(root, "runtime-overlays", "php-wasm-node-8-3")
-  const target = join(root, "node_modules", "@php-wasm", "node-8-3")
-  await rm(target, recursiveRmOptions)
-  await cp(source, target, { recursive: true })
-  await cp(join(root, "runtime-overlays", "provenance.json"), join(root, "php-wasm-overlay-provenance.json"))
+  for (const [version, provenance, output] of [
+    ["8-3", "provenance.json", "php-wasm-overlay-provenance.json"],
+    ["8-4", "provenance-8-4.json", "php-wasm-node-8-4-overlay-provenance.json"],
+  ]) {
+    const source = join(root, "runtime-overlays", `php-wasm-node-${version}`)
+    const target = join(root, "node_modules", "@php-wasm", `node-${version}`)
+    await rm(target, recursiveRmOptions)
+    await cp(source, target, {
+      recursive: true,
+      filter: (path) => relative(source, path).split(sep)[0] !== "node_modules",
+    })
+    await cp(join(root, "runtime-overlays", provenance), join(root, output))
+  }
   await rm(join(root, "runtime-overlays"), recursiveRmOptions)
 }
 

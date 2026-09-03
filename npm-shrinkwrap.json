@@ -20,10 +20,10 @@
         "@automattic/wp-codebox-core": "file:packages/runtime-core",
         "@automattic/wp-codebox-playground": "file:packages/runtime-playground",
         "@php-wasm/node-8-3": "file:runtime-overlays/php-wasm-node-8-3",
-        "@php-wasm/node-8-4": "3.1.46",
-        "@php-wasm/universal": "3.1.46",
+        "@php-wasm/node-8-4": "file:runtime-overlays/php-wasm-node-8-4",
+        "@php-wasm/universal": "3.1.52",
         "@types/pngjs": "^6.0.5",
-        "@wp-playground/cli": "3.1.46",
+        "@wp-playground/cli": "3.1.52",
         "@wp-playground/wordpress-builds": "0.9.19",
         "abort-controller": "^3.0.0",
         "accepts": "^1.3.8",
@@ -1566,12 +1566,12 @@
       "license": "MIT"
     },
     "node_modules/@php-wasm/cli-util": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/cli-util/-/cli-util-3.1.46.tgz",
-      "integrity": "sha512-m3bDR/PyiiJzdRMwUBfbXG2VwB+OhrAcCAmLbjB3dkkPxJ7mSCnNbInDY43fkpUuiqTCzamrrgt/tpGdtLPTiQ==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/cli-util/-/cli-util-3.1.52.tgz",
+      "integrity": "sha512-/YP0JqY+l5SjB/kn3yeOe/Kdo88xUkIis3xbhtMivuARTBtxYC7tdHpW1uxJiw6dkmHR89tVFxiPA9PiZdS0/g==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/util": "3.1.46",
+        "@php-wasm/util": "3.1.52",
         "fast-xml-parser": "^5.8.0",
         "jsonc-parser": "3.3.1"
       },
@@ -1581,9 +1581,9 @@
       }
     },
     "node_modules/@php-wasm/logger": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/logger/-/logger-3.1.46.tgz",
-      "integrity": "sha512-PfnDq5ammh5FXxkGX1TGEck9gmW3i76IvBCqtX4D45xnSBIuCeu8uf2oWuty2j/c8wTEO8vyRDdvCj5oow7bXw==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/logger/-/logger-3.1.52.tgz",
+      "integrity": "sha512-Hr/pKVE4HPjQP4rwvAlZm0DvcEHlVFesHgAvASEc5LgOaKbULy7SVYvtozuuh1e+24Hg1n6CoxA0fKL+nsp+Dg==",
       "license": "GPL-2.0-or-later",
       "engines": {
         "node": ">=20.10.0",
@@ -1591,23 +1591,23 @@
       }
     },
     "node_modules/@php-wasm/node": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/node/-/node-3.1.46.tgz",
-      "integrity": "sha512-PHmV+nAQka6l4SB7GyAbkneqnyhTvfjhC9jArKNF7sUDGwVDdvvu0Fh5JRY4G1Eam3Z5gopD4YwDySJCfdq8LA==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/node/-/node-3.1.52.tgz",
+      "integrity": "sha512-5fRw4dMvLGfRKHLZ7iGANVNQ8eGcq8Of91NcKo6qW8TorAIwAhTz+RQHuFtjI2zC7bq21E3IHxLa2I8338yX5A==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/cli-util": "3.1.46",
-        "@php-wasm/logger": "3.1.46",
-        "@php-wasm/node-5-2": "3.1.46",
-        "@php-wasm/node-7-4": "3.1.46",
-        "@php-wasm/node-8-0": "3.1.46",
-        "@php-wasm/node-8-1": "3.1.46",
-        "@php-wasm/node-8-2": "3.1.46",
-        "@php-wasm/node-8-3": "3.1.46",
-        "@php-wasm/node-8-4": "3.1.46",
-        "@php-wasm/node-8-5": "3.1.46",
-        "@php-wasm/universal": "3.1.46",
-        "@php-wasm/util": "3.1.46",
+        "@php-wasm/cli-util": "3.1.52",
+        "@php-wasm/logger": "3.1.52",
+        "@php-wasm/node-5-2": "3.1.52",
+        "@php-wasm/node-7-4": "3.1.52",
+        "@php-wasm/node-8-0": "3.1.52",
+        "@php-wasm/node-8-1": "3.1.52",
+        "@php-wasm/node-8-2": "3.1.52",
+        "@php-wasm/node-8-3": "3.1.52",
+        "@php-wasm/node-8-4": "3.1.52",
+        "@php-wasm/node-8-5": "3.1.52",
+        "@php-wasm/universal": "3.1.52",
+        "@php-wasm/util": "3.1.52",
         "fs-ext-extra-prebuilt": "2.2.7",
         "wasm-feature-detect": "1.8.0",
         "ws": "8.21.0"
@@ -1618,12 +1618,12 @@
       }
     },
     "node_modules/@php-wasm/node-5-2": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/node-5-2/-/node-5-2-3.1.46.tgz",
-      "integrity": "sha512-J77WzhYO0cBPDktaoBZ7y980knhN4/nghhVjv7fj57fWYA1m5ZbCGOqcZUys7sQm/vdahcpaU27vqUCHXBrbZw==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/node-5-2/-/node-5-2-3.1.52.tgz",
+      "integrity": "sha512-z/RzVUr9NPPIe/41VWyJJ5YETEbHwkbq9Jk5fLgc9xhkBDh8EmKRz3MptgvcQyF1IZyuPW4ADe3AZ+R24LrjQw==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/universal": "3.1.46",
+        "@php-wasm/universal": "3.1.52",
         "wasm-feature-detect": "1.8.0"
       },
       "engines": {
@@ -1632,12 +1632,12 @@
       }
     },
     "node_modules/@php-wasm/node-7-4": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/node-7-4/-/node-7-4-3.1.46.tgz",
-      "integrity": "sha512-HC3li/qX49C5FJKff0X+uewMFzVI5IE2hBhTb0DsJGn5xME1F7W6WoZ4hjrKkIGkjIbATPmiDGspUoHrvmX83A==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/node-7-4/-/node-7-4-3.1.52.tgz",
+      "integrity": "sha512-e31adpo6SOl7mlptVpHCJwtlDNZWbP/KvPVmkYubs5wtstAzY8YeGzYWndGDUh43SqBr+zxiB9CH2B77IgAyIg==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/universal": "3.1.46",
+        "@php-wasm/universal": "3.1.52",
         "wasm-feature-detect": "1.8.0"
       },
       "engines": {
@@ -1646,12 +1646,12 @@
       }
     },
     "node_modules/@php-wasm/node-8-0": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/node-8-0/-/node-8-0-3.1.46.tgz",
-      "integrity": "sha512-insUfErssn1NpQ3DNpRYOgTRf89/R7j2b7svMOU05J2sb6v3UFSmkKIR8MndxgvgW5uQhvyQyGHVa79B93ykiA==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/node-8-0/-/node-8-0-3.1.52.tgz",
+      "integrity": "sha512-+Po4d45fSqxgbPPeYRP7XNdc1oCGOWbuxluB0jJthA60LaTtLC4JEQ2B02BhE07gB2W+Nmvvf+HHY3e05JrvQw==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/universal": "3.1.46",
+        "@php-wasm/universal": "3.1.52",
         "wasm-feature-detect": "1.8.0"
       },
       "engines": {
@@ -1660,12 +1660,12 @@
       }
     },
     "node_modules/@php-wasm/node-8-1": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/node-8-1/-/node-8-1-3.1.46.tgz",
-      "integrity": "sha512-nPvpbUqAwHmrUSbaLFHgUZDuvyAfo1OfMjLXdgqMjn5nb2QnjlKota4afA/2F6j2WxzjdiXZxro1bSa5fB+OlQ==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/node-8-1/-/node-8-1-3.1.52.tgz",
+      "integrity": "sha512-H6wh4NDRTvDanVnumhN5dpSCUsKqBujW/84hHQcyZURGTS36frp1Runr5mmapRF/ZpyH7q+uG1kFzYEYkZIlaQ==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/universal": "3.1.46",
+        "@php-wasm/universal": "3.1.52",
         "wasm-feature-detect": "1.8.0"
       },
       "engines": {
@@ -1674,12 +1674,12 @@
       }
     },
     "node_modules/@php-wasm/node-8-2": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/node-8-2/-/node-8-2-3.1.46.tgz",
-      "integrity": "sha512-CyDiEZjDBQMsrEnNN+1ZOXcgB4K5bYZ8lmYYDdmGnto7U4nAyzPOT+LydkRoLd27AqabJqnimwkryduDptbE/A==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/node-8-2/-/node-8-2-3.1.52.tgz",
+      "integrity": "sha512-+PIiU8whNov93e3VnojZik0dDciRkqwd+j2+nm4VDcXfHD9SewHP+k3chaUipTAhDDx8Q6fWYWa1CSGp5jrAtg==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/universal": "3.1.46",
+        "@php-wasm/universal": "3.1.52",
         "wasm-feature-detect": "1.8.0"
       },
       "engines": {
@@ -1692,12 +1692,16 @@
       "link": true
     },
     "node_modules/@php-wasm/node-8-4": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/node-8-4/-/node-8-4-3.1.46.tgz",
-      "integrity": "sha512-4Wl7hwp6p3m0jaliIMYJz8cIY7obJF3HKxoHKxOcVllKgP+cSr5c/iwFcgYct4goC9sP7wr/xQGeClGQ51aP0A==",
+      "resolved": "runtime-overlays/php-wasm-node-8-4",
+      "link": true
+    },
+    "node_modules/@php-wasm/node-8-5": {
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/node-8-5/-/node-8-5-3.1.52.tgz",
+      "integrity": "sha512-7Y6EkujT5tUTiZKZYVsG8L7cAlLvpl6X5TX+SP1C7YZnxnpZBafX4j/4reQGrYTKdvrK/8NklRH73BQkXhYWhg==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/universal": "3.1.46",
+        "@php-wasm/universal": "3.1.52",
         "wasm-feature-detect": "1.8.0"
       },
       "engines": {
@@ -1705,13 +1709,13 @@
         "npm": ">=10.2.3"
       }
     },
-    "node_modules/@php-wasm/node-8-5": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/node-8-5/-/node-8-5-3.1.46.tgz",
-      "integrity": "sha512-ndL2jnGCVVwhAmHPgo3tWZ+I6q2Flz6OWbbQwGVBQcXqqPdZuVHh+0Gb5KTTn1cGtCErdpL+3ysLwN7tk5LqUA==",
+    "node_modules/@php-wasm/node/node_modules/@php-wasm/node-8-3": {
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/node-8-3/-/node-8-3-3.1.52.tgz",
+      "integrity": "sha512-UNkxXw7qUfeS6jG0luztYGosZHZaVMiziaPwY6FFUH0FnHwhrtFpYLI86ksfOZMnS9BjDf7bryIrdr0160tIJQ==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/universal": "3.1.46",
+        "@php-wasm/universal": "3.1.52",
         "wasm-feature-detect": "1.8.0"
       },
       "engines": {
@@ -1733,12 +1737,12 @@
       }
     },
     "node_modules/@php-wasm/progress": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/progress/-/progress-3.1.46.tgz",
-      "integrity": "sha512-WmmgEm6yz322M3pzgAUjxckyhpVxr2WWlHyVYDyaMZWU6UIDUHfiRZRPzADohNyYvV3g0/zMNaDGmxz+TTXwQQ==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/progress/-/progress-3.1.52.tgz",
+      "integrity": "sha512-Zr4pHQDyX+OhkiLm830x0nt38L6ZRK3cWJMJNYSxvhlN7YKEmTHoA8hifchIE7OfgpF++s0rORXoBvEX5MmteA==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/logger": "3.1.46"
+        "@php-wasm/logger": "3.1.52"
       },
       "engines": {
         "node": ">=20.10.0",
@@ -1746,9 +1750,9 @@
       }
     },
     "node_modules/@php-wasm/scopes": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/scopes/-/scopes-3.1.46.tgz",
-      "integrity": "sha512-WkH55sjdRSE+FIljMy97ScPIhGLbdVZOSmwXJkctEvmflZqtDIS4fOs9qRKj2dV+Nh4ewyfcWUSf5tTMJnyAuA==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/scopes/-/scopes-3.1.52.tgz",
+      "integrity": "sha512-1+f6czXaQVtO+LT8Bx9gORg/dQ+L5M7Kkp1Bk69RJE9nde6ZO/ex/wLymCx0nORHN01k6csqG2j/Nnew4KLRLg==",
       "license": "GPL-2.0-or-later",
       "engines": {
         "node": ">=20.10.0",
@@ -1756,24 +1760,24 @@
       }
     },
     "node_modules/@php-wasm/stream-compression": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/stream-compression/-/stream-compression-3.1.46.tgz",
-      "integrity": "sha512-+oUw4CPX52FgYXEh5C+MgJAg7Cy5OeaVuh7HnQR6oxb69nU63/r8tHTLV/WrWRyjBYh321uJzLV7Gg29qmiUtg==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/stream-compression/-/stream-compression-3.1.52.tgz",
+      "integrity": "sha512-RpCCUpF/BwPLbqhUWxHz4utRtu5gSM66SaCFQkxdjAGI5yitaptsu1W6Z7Wp2UDabF3g1qfKfDog0JQ3D9azcw==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/util": "3.1.46"
+        "@php-wasm/util": "3.1.52"
       }
     },
     "node_modules/@php-wasm/universal": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/universal/-/universal-3.1.46.tgz",
-      "integrity": "sha512-sx0KyN5kcsCMzwy+XJAyoOukSA5TEZYd0LK3l9kRP3I0CSd5h6JItkf5eZ42WltB+wD+aTRdqSwc/Mvkc7qBjQ==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/universal/-/universal-3.1.52.tgz",
+      "integrity": "sha512-vgEV73SfpECzcCuTmr8+tGEzK6syk0p2I6E5CX2kJaE1/prCc4x5DyZtQ0dwhnzcEGrbhKDL2mpxxgl4B9fQOA==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/logger": "3.1.46",
-        "@php-wasm/progress": "3.1.46",
-        "@php-wasm/stream-compression": "3.1.46",
-        "@php-wasm/util": "3.1.46",
+        "@php-wasm/logger": "3.1.52",
+        "@php-wasm/progress": "3.1.52",
+        "@php-wasm/stream-compression": "3.1.52",
+        "@php-wasm/util": "3.1.52",
         "ini": "4.1.2"
       },
       "engines": {
@@ -1791,22 +1795,22 @@
       }
     },
     "node_modules/@php-wasm/util": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/util/-/util-3.1.46.tgz",
-      "integrity": "sha512-Yh9HNbx+rB2R1tScUvvAsbJVIB7msjWceWYogyR2YvAOqlDL0ymZyaQ65+K3QcHh/8HostTRwwgQh5oK4DLDrA==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/util/-/util-3.1.52.tgz",
+      "integrity": "sha512-lwxtwyIXEO8537eCv5iBfx1WW+DhSYc6obgtTQ6Up85GbHCE050n0RbOWva4XBu7T3Y5PfQshPoPccM/l14chA==",
       "engines": {
         "node": ">=20.10.0",
         "npm": ">=10.2.3"
       }
     },
     "node_modules/@php-wasm/web-service-worker": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/web-service-worker/-/web-service-worker-3.1.46.tgz",
-      "integrity": "sha512-GwQzZbEnF+7a3wGqDaMCdbsCuDUdOvTyHAul40TbSATUZ1FdUVagI94pMMMQtYCCxQFnEuO/WxzwDKJJ3hpaug==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/web-service-worker/-/web-service-worker-3.1.52.tgz",
+      "integrity": "sha512-jEajg31JjVEdLX9yeQ1pa34dtztfMiz6I5y20/LZ3NADO9NrSvcAPsjYf2NkN4cpUDz4mKs6hkOskA6gd1CVxw==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/scopes": "3.1.46",
-        "@php-wasm/universal": "3.1.46"
+        "@php-wasm/scopes": "3.1.52",
+        "@php-wasm/universal": "3.1.52"
       },
       "engines": {
         "node": ">=20.10.0",
@@ -1814,13 +1818,13 @@
       }
     },
     "node_modules/@php-wasm/xdebug-bridge": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@php-wasm/xdebug-bridge/-/xdebug-bridge-3.1.46.tgz",
-      "integrity": "sha512-no8Hr5Uw6EcwKjwUbBHlu2gTCZ5v4szeQT1AKjDYazM8Mur1AtaL2/q8X0IB8Hy4NDV/Jxgt33lxCh1n8XnnWA==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@php-wasm/xdebug-bridge/-/xdebug-bridge-3.1.52.tgz",
+      "integrity": "sha512-I5yMzjRe+Ivh6N2e5QSh8Fy3VN9WIv7YFhqFOlN3eq0UKCt3gDERCOtt96VMulWYH2m8qmYvpcX20h6p3T2Hyw==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/logger": "3.1.46",
-        "@php-wasm/universal": "3.1.46",
+        "@php-wasm/logger": "3.1.52",
+        "@php-wasm/universal": "3.1.52",
         "ws": "8.21.0",
         "xml2js": "0.6.2",
         "yargs": "17.7.2"
@@ -1831,24 +1835,6 @@
       "engines": {
         "node": ">=20.10.0",
         "npm": ">=10.2.3"
-      }
-    },
-    "node_modules/@php-wasm/xdebug-bridge/node_modules/yargs": {
-      "version": "17.7.2",
-      "resolved": "https://registry.npmjs.org/yargs/-/yargs-17.7.2.tgz",
-      "integrity": "sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==",
-      "license": "MIT",
-      "dependencies": {
-        "cliui": "^8.0.1",
-        "escalade": "^3.1.1",
-        "get-caller-file": "^2.0.5",
-        "require-directory": "^2.1.1",
-        "string-width": "^4.2.3",
-        "y18n": "^5.0.5",
-        "yargs-parser": "^21.1.1"
-      },
-      "engines": {
-        "node": ">=12"
       }
     },
     "node_modules/@types/aws-lambda": {
@@ -1904,19 +1890,19 @@
       }
     },
     "node_modules/@wp-playground/blueprints": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@wp-playground/blueprints/-/blueprints-3.1.46.tgz",
-      "integrity": "sha512-3X6AtHU8FyK4XtQKBN6lS3HKWykLl9TQ+t+iM3c6XYtQJatENoKmsZjv/JFgKEo6c+JP4ma8CsEdb6PqwJYEuw==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@wp-playground/blueprints/-/blueprints-3.1.52.tgz",
+      "integrity": "sha512-K4QieiesG8MgZnKQerObS7dON4ngZCDt32aqnYLeaTiSJ2jFXqMcfBXH8MjFO3KVncJsTfU2euh8OtDV1fKkqA==",
       "dependencies": {
-        "@php-wasm/logger": "3.1.46",
-        "@php-wasm/progress": "3.1.46",
-        "@php-wasm/stream-compression": "3.1.46",
-        "@php-wasm/universal": "3.1.46",
-        "@php-wasm/util": "3.1.46",
-        "@php-wasm/web-service-worker": "3.1.46",
-        "@wp-playground/common": "3.1.46",
-        "@wp-playground/storage": "3.1.46",
-        "@wp-playground/wordpress": "3.1.46",
+        "@php-wasm/logger": "3.1.52",
+        "@php-wasm/progress": "3.1.52",
+        "@php-wasm/stream-compression": "3.1.52",
+        "@php-wasm/universal": "3.1.52",
+        "@php-wasm/util": "3.1.52",
+        "@php-wasm/web-service-worker": "3.1.52",
+        "@wp-playground/common": "3.1.52",
+        "@wp-playground/storage": "3.1.52",
+        "@wp-playground/wordpress": "3.1.52",
         "ajv": "8.18.0"
       },
       "engines": {
@@ -1925,23 +1911,23 @@
       }
     },
     "node_modules/@wp-playground/cli": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@wp-playground/cli/-/cli-3.1.46.tgz",
-      "integrity": "sha512-rn20w2Fp72wwnnOB+UyvvZ9zRx1dsPXC7KSMgJFEvoLNEVdp3bXcvyv8U5XZpeAPqkZB7nhMJDwOhcLR4SqVOA==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@wp-playground/cli/-/cli-3.1.52.tgz",
+      "integrity": "sha512-NXApYcnZwKGOL/E6rdAwHKXbyPFMRIBKF9SX/TlxH9TOgBef0eblwjylnxnYzdAuiOzdJT7PhO4gJw2WSFTZAw==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/cli-util": "3.1.46",
-        "@php-wasm/logger": "3.1.46",
-        "@php-wasm/node": "3.1.46",
-        "@php-wasm/progress": "3.1.46",
-        "@php-wasm/universal": "3.1.46",
-        "@php-wasm/util": "3.1.46",
-        "@php-wasm/xdebug-bridge": "3.1.46",
-        "@wp-playground/blueprints": "3.1.46",
-        "@wp-playground/common": "3.1.46",
-        "@wp-playground/storage": "3.1.46",
-        "@wp-playground/tools": "3.1.46",
-        "@wp-playground/wordpress": "3.1.46",
+        "@php-wasm/cli-util": "3.1.52",
+        "@php-wasm/logger": "3.1.52",
+        "@php-wasm/node": "3.1.52",
+        "@php-wasm/progress": "3.1.52",
+        "@php-wasm/universal": "3.1.52",
+        "@php-wasm/util": "3.1.52",
+        "@php-wasm/xdebug-bridge": "3.1.52",
+        "@wp-playground/blueprints": "3.1.52",
+        "@wp-playground/common": "3.1.52",
+        "@wp-playground/storage": "3.1.52",
+        "@wp-playground/tools": "3.1.52",
+        "@wp-playground/wordpress": "3.1.52",
         "express": "4.22.2",
         "fs-extra": "11.1.1",
         "tmp-promise": "3.0.3",
@@ -1966,32 +1952,14 @@
         "node": ">=14.14"
       }
     },
-    "node_modules/@wp-playground/cli/node_modules/yargs": {
-      "version": "17.7.2",
-      "resolved": "https://registry.npmjs.org/yargs/-/yargs-17.7.2.tgz",
-      "integrity": "sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==",
-      "license": "MIT",
-      "dependencies": {
-        "cliui": "^8.0.1",
-        "escalade": "^3.1.1",
-        "get-caller-file": "^2.0.5",
-        "require-directory": "^2.1.1",
-        "string-width": "^4.2.3",
-        "y18n": "^5.0.5",
-        "yargs-parser": "^21.1.1"
-      },
-      "engines": {
-        "node": ">=12"
-      }
-    },
     "node_modules/@wp-playground/common": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@wp-playground/common/-/common-3.1.46.tgz",
-      "integrity": "sha512-MZ4ZSsh9GG7oHYhe38T+9uW6mGDvlwoH8IyJWNJN/PgH5SPPUHnP1CtmiMTl/p+sOf4ELf4A/REa16OtoJ83Qg==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@wp-playground/common/-/common-3.1.52.tgz",
+      "integrity": "sha512-QGE8CdykgfVEjqRKMXMFsXOwh3MV26FkXJ4c/HzsKKAaRt+zwp7BAK2s6jht40iz9TVDR3ZPcpBrSltfmjIshQ==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/universal": "3.1.46",
-        "@php-wasm/util": "3.1.46"
+        "@php-wasm/universal": "3.1.52",
+        "@php-wasm/util": "3.1.52"
       },
       "engines": {
         "node": ">=20.10.0",
@@ -1999,14 +1967,14 @@
       }
     },
     "node_modules/@wp-playground/storage": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@wp-playground/storage/-/storage-3.1.46.tgz",
-      "integrity": "sha512-NH9Tkt4WBpFtgZ6KrUkPJygsjzbbN1UVQ7IBawQba4dB2mjx2HNznUT3qyCPpQL6Vn8dO9YFHQ4fRLxvWbeCpw==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@wp-playground/storage/-/storage-3.1.52.tgz",
+      "integrity": "sha512-hUQLdZ5iSC8Y01o06aMK/m9DZmMjo2cgl52MvXxR8Cuma+xgrMnlC+G1n7lnjaT+5Wbo58KaawxjZJxUpgcvxw==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/stream-compression": "3.1.46",
-        "@php-wasm/universal": "3.1.46",
-        "@php-wasm/util": "3.1.46",
+        "@php-wasm/stream-compression": "3.1.52",
+        "@php-wasm/universal": "3.1.52",
+        "@php-wasm/util": "3.1.52",
         "@zip.js/zip.js": "2.7.57",
         "isomorphic-git": "1.37.6",
         "octokit": "3.1.2",
@@ -2106,12 +2074,13 @@
       }
     },
     "node_modules/@wp-playground/tools": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@wp-playground/tools/-/tools-3.1.46.tgz",
-      "integrity": "sha512-rSov51gL1HnxgXkhw2TO9EIuldj3aaBYPGQ+MQsmF5adV5CSYdw+wq2ZJS/wpUiePyv6gvdZJTWaVqbjINFc2w==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@wp-playground/tools/-/tools-3.1.52.tgz",
+      "integrity": "sha512-rn604x/fH2VFW6rYw3mN5idaMh03sKIbxoeBDPZsh6Ca1Hv9oyheiQFEy0Y3Kzli4B58YwbRUcC0wlv3laT3hw==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@wp-playground/blueprints": "3.1.46"
+        "@php-wasm/util": "3.1.52",
+        "@wp-playground/blueprints": "3.1.52"
       },
       "engines": {
         "node": ">=20.10.0",
@@ -2119,15 +2088,15 @@
       }
     },
     "node_modules/@wp-playground/wordpress": {
-      "version": "3.1.46",
-      "resolved": "https://registry.npmjs.org/@wp-playground/wordpress/-/wordpress-3.1.46.tgz",
-      "integrity": "sha512-QGzxrSmlm3ewiyU6NB2VDMgqZ5ZPuuSsPg4YkRnQrX489v0ohqCLp/jUe/+5nvXKGNg4KnR/37QrerEtLryXcw==",
+      "version": "3.1.52",
+      "resolved": "https://registry.npmjs.org/@wp-playground/wordpress/-/wordpress-3.1.52.tgz",
+      "integrity": "sha512-vXvgrN33y3zvxWxVjtEEb4L4ZNfgBRPlvVe6wXHB19Dbiu32ZLkrlUpEkpKvft7wnrXnWvbDJqbEBfU2rKJtqw==",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/logger": "3.1.46",
-        "@php-wasm/universal": "3.1.46",
-        "@php-wasm/util": "3.1.46",
-        "@wp-playground/common": "3.1.46",
+        "@php-wasm/logger": "3.1.52",
+        "@php-wasm/universal": "3.1.52",
+        "@php-wasm/util": "3.1.52",
+        "@wp-playground/common": "3.1.52",
         "zstddec": "^0.2.0"
       },
       "engines": {
@@ -2880,15 +2849,6 @@
       "resolved": "https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.0.7.tgz",
       "integrity": "sha512-NXdYc3dLr47pBkpUCHtKSwIOQXLVn8dZEuywboCOJY/osA0wFSLlSawr3KN8qXJEyX66FcONTH8EIlVuK0yyFA==",
       "license": "MIT"
-    },
-    "node_modules/express/node_modules/range-parser": {
-      "version": "1.2.1",
-      "resolved": "https://registry.npmjs.org/range-parser/-/range-parser-1.2.1.tgz",
-      "integrity": "sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.6"
-      }
     },
     "node_modules/fast-deep-equal": {
       "version": "3.1.3",
@@ -4112,15 +4072,6 @@
         "node": ">= 0.8.0"
       }
     },
-    "node_modules/send/node_modules/range-parser": {
-      "version": "1.2.1",
-      "resolved": "https://registry.npmjs.org/range-parser/-/range-parser-1.2.1.tgz",
-      "integrity": "sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.6"
-      }
-    },
     "node_modules/serve-static": {
       "version": "1.16.3",
       "resolved": "https://registry.npmjs.org/serve-static/-/serve-static-1.16.3.tgz",
@@ -4815,13 +4766,13 @@
       "version": "0.26.8",
       "dependencies": {
         "@automattic/wp-codebox-core": "file:../runtime-core",
-        "@php-wasm/node": "3.1.46",
-        "@php-wasm/universal": "3.1.46",
+        "@php-wasm/node": "3.1.52",
+        "@php-wasm/universal": "3.1.52",
         "@types/pngjs": "^6.0.5",
-        "@wp-playground/blueprints": "3.1.46",
-        "@wp-playground/cli": "3.1.46",
-        "@wp-playground/storage": "3.1.46",
-        "@wp-playground/wordpress": "3.1.46",
+        "@wp-playground/blueprints": "3.1.52",
+        "@wp-playground/cli": "3.1.52",
+        "@wp-playground/storage": "3.1.52",
+        "@wp-playground/wordpress": "3.1.52",
         "@wp-playground/wordpress-builds": "0.9.19",
         "pixelmatch": "^7.2.0",
         "playwright": "^1.60.0",
@@ -4839,6 +4790,86 @@
       "license": "GPL-2.0-or-later",
       "dependencies": {
         "@php-wasm/universal": "3.1.46",
+        "wasm-feature-detect": "1.8.0"
+      },
+      "engines": {
+        "node": ">=20.10.0",
+        "npm": ">=10.2.3"
+      }
+    },
+    "runtime-overlays/php-wasm-node-8-3/node_modules/@php-wasm/logger": {
+      "version": "3.1.46",
+      "resolved": "https://registry.npmjs.org/@php-wasm/logger/-/logger-3.1.46.tgz",
+      "integrity": "sha512-PfnDq5ammh5FXxkGX1TGEck9gmW3i76IvBCqtX4D45xnSBIuCeu8uf2oWuty2j/c8wTEO8vyRDdvCj5oow7bXw==",
+      "license": "GPL-2.0-or-later",
+      "engines": {
+        "node": ">=20.10.0",
+        "npm": ">=10.2.3"
+      }
+    },
+    "runtime-overlays/php-wasm-node-8-3/node_modules/@php-wasm/progress": {
+      "version": "3.1.46",
+      "resolved": "https://registry.npmjs.org/@php-wasm/progress/-/progress-3.1.46.tgz",
+      "integrity": "sha512-WmmgEm6yz322M3pzgAUjxckyhpVxr2WWlHyVYDyaMZWU6UIDUHfiRZRPzADohNyYvV3g0/zMNaDGmxz+TTXwQQ==",
+      "license": "GPL-2.0-or-later",
+      "dependencies": {
+        "@php-wasm/logger": "3.1.46"
+      },
+      "engines": {
+        "node": ">=20.10.0",
+        "npm": ">=10.2.3"
+      }
+    },
+    "runtime-overlays/php-wasm-node-8-3/node_modules/@php-wasm/stream-compression": {
+      "version": "3.1.46",
+      "resolved": "https://registry.npmjs.org/@php-wasm/stream-compression/-/stream-compression-3.1.46.tgz",
+      "integrity": "sha512-+oUw4CPX52FgYXEh5C+MgJAg7Cy5OeaVuh7HnQR6oxb69nU63/r8tHTLV/WrWRyjBYh321uJzLV7Gg29qmiUtg==",
+      "license": "GPL-2.0-or-later",
+      "dependencies": {
+        "@php-wasm/util": "3.1.46"
+      }
+    },
+    "runtime-overlays/php-wasm-node-8-3/node_modules/@php-wasm/universal": {
+      "version": "3.1.46",
+      "resolved": "https://registry.npmjs.org/@php-wasm/universal/-/universal-3.1.46.tgz",
+      "integrity": "sha512-sx0KyN5kcsCMzwy+XJAyoOukSA5TEZYd0LK3l9kRP3I0CSd5h6JItkf5eZ42WltB+wD+aTRdqSwc/Mvkc7qBjQ==",
+      "license": "GPL-2.0-or-later",
+      "dependencies": {
+        "@php-wasm/logger": "3.1.46",
+        "@php-wasm/progress": "3.1.46",
+        "@php-wasm/stream-compression": "3.1.46",
+        "@php-wasm/util": "3.1.46",
+        "ini": "4.1.2"
+      },
+      "engines": {
+        "node": ">=20.10.0",
+        "npm": ">=10.2.3"
+      }
+    },
+    "runtime-overlays/php-wasm-node-8-3/node_modules/@php-wasm/util": {
+      "version": "3.1.46",
+      "resolved": "https://registry.npmjs.org/@php-wasm/util/-/util-3.1.46.tgz",
+      "integrity": "sha512-Yh9HNbx+rB2R1tScUvvAsbJVIB7msjWceWYogyR2YvAOqlDL0ymZyaQ65+K3QcHh/8HostTRwwgQh5oK4DLDrA==",
+      "engines": {
+        "node": ">=20.10.0",
+        "npm": ">=10.2.3"
+      }
+    },
+    "runtime-overlays/php-wasm-node-8-3/node_modules/ini": {
+      "version": "4.1.2",
+      "resolved": "https://registry.npmjs.org/ini/-/ini-4.1.2.tgz",
+      "integrity": "sha512-AMB1mvwR1pyBFY/nSevUX6y8nJWS63/SzUKD3JyQn97s4xgIdgQPT75IRouIiBAN4yLQBUShNYVW0+UG25daCw==",
+      "license": "ISC",
+      "engines": {
+        "node": "^14.17.0 || ^16.13.0 || >=18.0.0"
+      }
+    },
+    "runtime-overlays/php-wasm-node-8-4": {
+      "name": "@php-wasm/node-8-4",
+      "version": "3.1.52",
+      "license": "GPL-2.0-or-later",
+      "dependencies": {
+        "@php-wasm/universal": "3.1.52",
         "wasm-feature-detect": "1.8.0"
       },
       "engines": {
