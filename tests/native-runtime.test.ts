@@ -80,7 +80,8 @@ const docker = createDockerNativeRuntimeDriver({
     if (args[0] === "inspect") return { stdout: "running\n0\n{\"80/tcp\":[{\"HostIp\":\"127.0.0.1\",\"HostPort\":\"49152\"}]}\n", stderr: "" }
     if (args.some((arg) => arg.includes("PHP_VERSION"))) return { stdout: "8.4.1\napache2handler", stderr: "" }
     if (args.some((arg) => arg.includes("opcache_get_configuration()"))) return { stdout: "{\"directives\":{\"opcache.enable\":true}}", stderr: "" }
-    if (args.some((arg) => arg.includes("get_user_by"))) return { stdout: "ready", stderr: "" }
+    if (args.some((arg) => arg.includes("check_connection"))) return { stdout: "ready", stderr: "" }
+    if (args.some((arg) => arg.includes("wp_install("))) return { stdout: "ready", stderr: "" }
     return { stdout: "ok", stderr: "" }
   },
 })

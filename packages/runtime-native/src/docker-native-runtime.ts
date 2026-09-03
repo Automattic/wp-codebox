@@ -212,12 +212,27 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
     const normalized = value.trim().replace(/\s+/g, " ")
     return normalized ? normalized.slice(0, 4_000) : "none"
   }
+  /// The database container accepts TCP before it can serve queries, so prove
+  /// WordPress itself can connect before installing.
+  private async waitForDatabase(): Promise<void> {
+    const probe = "define('WP_INSTALLING', true); require '/var/www/html/wp-load.php'; echo $GLOBALS['wpdb']->check_connection(false) ? 'ready' : 'unavailable';"
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const observed = await this.diagnosticDocker(["exec", this.app, "php", "-r", probe])
+      if (observed.includes("ready")) return
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+    }
+    throw new NativeContainmentUnavailableError(`Contained database never accepted WordPress connections; docker logs: ${await this.diagnosticDocker(["logs", "--tail", "100", this.database])}`)
+  }
+  /// Install through WordPress's own API rather than the localized HTML form,
+  /// so installation cannot silently depend on markup or locale.
   private async installFixtureWordPress(): Promise<void> {
-    const body = new URLSearchParams({ weblog_title: "WP Codebox Fixture", user_name: "fixture-admin", admin_password: this.fixturePassword, admin_password2: this.fixturePassword, admin_email: "fixture-admin@example.test", Submit: "Install WordPress", language: "en_US" }).toString()
-    const installed = await this.dependencies.fetch(`${this.previewUrl}/wp-admin/install.php?step=2`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body })
-    if (installed.status >= 400 || !/Success|Log In/i.test(installed.body)) throw new NativeContainmentUnavailableError("Contained WordPress installation did not complete.")
-    const user = await this.runDocker(["exec", this.app, "php", "-r", "require '/var/www/html/wp-load.php'; echo get_user_by('login', 'fixture-admin') ? 'ready' : 'missing';"])
-    if (user.stdout.trim() !== "ready") throw new NativeContainmentUnavailableError("Contained WordPress fixture administrator was not created.")
+    await this.waitForDatabase()
+    const install = "define('WP_INSTALLING', true); require '/var/www/html/wp-load.php'; require_once ABSPATH . 'wp-admin/includes/upgrade.php'; if (!is_blog_installed()) { $result = wp_install('WP Codebox Fixture', 'fixture-admin', 'fixture-admin@example.test', false, '', getenv('WP_CODEBOX_FIXTURE_PASSWORD')); if (is_wp_error($result)) { echo 'install-error: ', $result->get_error_message(); exit(1); } } echo get_user_by('login', 'fixture-admin') && is_blog_installed() ? 'ready' : 'missing';"
+    const installed = await this.diagnosticDocker(["exec", "-e", `WP_CODEBOX_FIXTURE_PASSWORD=${this.fixturePassword}`, this.app, "php", "-r", install])
+    if (!installed.includes("ready")) throw new NativeContainmentUnavailableError(`Contained WordPress installation did not complete: ${this.redactFixtureSecret(installed)}`)
+  }
+  private redactFixtureSecret(value: string): string {
+    return value.split(this.fixturePassword).join("[redacted]")
   }
   private async measureColdStartup(): Promise<number> {
     if (this.startupMs <= 0) throw new NativeContainmentUnavailableError("Contained WordPress startup was not measured.")
