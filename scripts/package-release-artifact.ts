@@ -37,7 +37,7 @@ try {
   await mkdir(join(packageRoot, "scripts"), { recursive: true })
   await cp(resolve(repoRoot, "scripts", "apply-development-patches.mjs"), join(packageRoot, "scripts", "apply-development-patches.mjs"))
 
-  for (const packageName of ["runtime-core", "runtime-playground", "cli"]) {
+  for (const packageName of ["runtime-core", "runtime-native", "runtime-playground", "cli"]) {
     const sourceRoot = resolve(repoRoot, "packages", packageName)
     const targetRoot = join(packageRoot, "packages", packageName)
     await mkdir(targetRoot, { recursive: true })
@@ -141,6 +141,7 @@ async function materializeWorkspacePackages(root: string): Promise<void> {
 
   const packages = new Map([
     ["runtime-core", "wp-codebox-core"],
+    ["runtime-native", "wp-codebox-native"],
     ["runtime-playground", "wp-codebox-playground"],
     ["cli", "wp-codebox-cli"],
   ])

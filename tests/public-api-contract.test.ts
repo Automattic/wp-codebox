@@ -104,6 +104,7 @@ assert.deepEqual(exportKeys(rootPackage), [
   "./runtime-presets",
   "./playground",
   "./playground/public",
+  "./native",
   "./cli",
   "./cli/recipe-secret-env",
   "./cli/bounded-recipe-plan",
