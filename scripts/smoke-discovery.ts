@@ -55,6 +55,7 @@ const BROWSER_FILES: readonly string[] = [
   "tests/browser-visual-compare-url-capture.test.ts",
   "tests/browser-viewport-replay.test.ts",
   "tests/editor-actions-save.integration.test.ts",
+  "tests/native-docker-runtime.integration.test.ts",
   "tests/playground-mapped-domain-multisite.integration.test.ts",
   "tests/playground-staged-upload-preview.integration.test.ts",
   "tests/runtime-backed-multisite-workload.integration.test.ts",
