@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "wasm-feature-detect": "1.8.0",
-    "@php-wasm/universal": "3.1.52"
+    "@php-wasm/universal": "3.1.46"
   },
   "packageManager": "npm@10.9.2",
   "overrides": {

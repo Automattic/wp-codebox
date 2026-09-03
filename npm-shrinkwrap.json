@@ -4789,7 +4789,7 @@
       "version": "3.1.46",
       "license": "GPL-2.0-or-later",
       "dependencies": {
-        "@php-wasm/universal": "3.1.52",
+        "@php-wasm/universal": "3.1.46",
         "wasm-feature-detect": "1.8.0"
       },
       "engines": {
