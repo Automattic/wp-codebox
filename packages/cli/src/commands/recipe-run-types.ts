@@ -10,6 +10,8 @@ import type { RecipeSourceProvenance } from "../recipe-sources.js"
 
 export interface RecipeRunOptions {
   recipePath: string
+  recipe?: WorkspaceRecipe
+  recipeDirectory?: string
   outputPath?: string
   artifactsDirectory?: string
   runRegistryDirectory?: string
@@ -32,6 +34,8 @@ export interface RecipeRunOptions {
   dryRun: boolean
   hostNodeHeapMiB?: number
 }
+
+export type RecipeRunOptionsInput = Pick<RecipeRunOptions, "recipePath"> & Partial<Omit<RecipeRunOptions, "recipePath">>
 
 export interface RecipeValidateOptions {
   recipePath: string
@@ -108,7 +112,7 @@ export interface RecipeRunProvenance {
   }
 }
 
-export type RecipeRunCommandOutput = RecipeRunOutput | RecipeDryRunOutput
+export type RecipeRunCommandOutput = (RecipeRunOutput | RecipeDryRunOutput) & { logs?: string[] }
 
 export interface RecipeRunComponentContract {
   schema: "wp-codebox/component-contract-result/v1"

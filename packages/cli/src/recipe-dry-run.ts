@@ -12,6 +12,8 @@ import { runtimeServicePlan } from "./runtime-services.js"
 
 export interface RecipeDryRunOptions {
   recipePath: string
+  recipe?: WorkspaceRecipe
+  recipeDirectory?: string
   artifactsDirectory?: string
   policy?: RuntimePolicy
 }
@@ -284,8 +286,8 @@ interface RecipeDryRunStep {
 export async function dryRunRecipe(options: RecipeDryRunOptions, context: RecipeDryRunContext): Promise<RecipeDryRunOutput> {
   const recipePath = resolve(options.recipePath)
   try {
-    const recipeDirectory = dirname(recipePath)
-    const recipe = await loadWorkspaceRecipe(recipePath)
+    const recipeDirectory = resolve(options.recipeDirectory ?? dirname(recipePath))
+    const recipe = options.recipe ?? await loadWorkspaceRecipe(recipePath)
     const artifactMountConflict = recipeArtifactsMountConflict(recipe, recipeDirectory, options.artifactsDirectory ?? recipe.artifacts?.directory)
     if (artifactMountConflict) {
       return {

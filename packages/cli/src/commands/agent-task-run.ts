@@ -1,9 +1,11 @@
 import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeExecutionChanges, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, publicArtifactRefGroups, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type HeadlessAgentTaskResult, type SandboxToolPolicySnapshot, type TypedArtifactDTO } from "@automattic/wp-codebox-core"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeExecutionChanges, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeTaskInput, parseCommandOptions, publicArtifactRefGroups, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type HeadlessAgentTaskResult, type SandboxToolPolicySnapshot, type TypedArtifactDTO } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
-import { runRecipeRunCommand } from "./recipe-run.js"
+import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewLease, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
+import { createRecipeRunOptions, executeRecipeRun } from "./recipe-run.js"
+import type { RecipeRunCommandOutput } from "./recipe-run-types.js"
 
 export type { AgentTaskRunInput } from "@automattic/wp-codebox-core"
 
@@ -48,13 +50,6 @@ export interface AgentTaskRunOutput {
   metadata: Record<string, unknown>
 }
 
-interface CapturedOutput<T> {
-  result: T
-  stdout: string
-  stderr: string
-  exitCode: number
-}
-
 export interface FailureEvidenceInput {
   input: AgentTaskRunInput
   task: string
@@ -63,7 +58,6 @@ export interface FailureEvidenceInput {
   recipePath: string
   generatedRecipeArtifact?: GeneratedRecipeArtifactRef
   run: Record<string, unknown>
-  capture?: CapturedOutput<unknown>
   error?: unknown
 }
 
@@ -130,38 +124,29 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
   const task = taskInput.goal
   const wpVersion = stringValue(input.wp) || DEFAULT_WORDPRESS_VERSION
   const artifacts = stringValue(input.artifacts_path) || await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-artifacts-"))
-  const recipeDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-recipe-"))
-  const recipePath = join(recipeDirectory, "recipe.json")
-  let capture: CapturedOutput<number> | undefined
+  const recipePath = join(artifacts, "files", "generated-recipe", "recipe.json")
+  let runOutput: RecipeRunCommandOutput | undefined
   let recipeJson = ""
   let generatedRecipeArtifact: GeneratedRecipeArtifactRef | undefined
 
   try {
     const recipe = buildAgentTaskRecipe({ ...input, artifacts_path: artifacts }, taskInput, wpVersion)
     recipeJson = `${JSON.stringify(recipe, null, 2)}\n`
-    await writeFile(recipePath, recipeJson)
-    const recipeRunArgs = ["--recipe", recipePath, "--artifacts", artifacts, "--json"]
-    if (options.previewHoldSeconds) {
-      recipeRunArgs.push("--preview-hold-seconds", options.previewHoldSeconds)
-    }
-    if (options.previewPort) {
-      recipeRunArgs.push("--preview-port", options.previewPort)
-    }
-    if (options.previewBind) {
-      recipeRunArgs.push("--preview-bind", options.previewBind)
-    }
-    if (options.previewHoldBlocking) {
-      recipeRunArgs.push("--preview-hold-blocking")
-    }
-    if (options.previewPublicUrl) {
-      recipeRunArgs.push("--preview-public-url", options.previewPublicUrl)
-    }
-    if (options.previewLeaseJson) {
-      recipeRunArgs.push("--preview-lease-json", options.previewLeaseJson)
-    }
-    capture = await captureOutput(() => runRecipeRunCommand(recipeRunArgs))
+    runOutput = await executeRecipeRun(createRecipeRunOptions({
+      recipePath,
+      recipe,
+      recipeDirectory: process.cwd(),
+      artifactsDirectory: artifacts,
+      previewHoldSeconds: options.previewHoldSeconds ? parsePreviewHoldSeconds(options.previewHoldSeconds) : undefined,
+      previewPort: options.previewPort ? parsePreviewPort(options.previewPort) : undefined,
+      previewBind: options.previewBind ? parsePreviewBind(options.previewBind) : undefined,
+      previewHoldBlocking: options.previewHoldBlocking ?? false,
+      previewPublicUrl: options.previewPublicUrl ? parsePreviewPublicUrl(options.previewPublicUrl) : undefined,
+      previewLease: options.previewLeaseJson ? parsePreviewLease(options.previewLeaseJson) : undefined,
+    }))
     generatedRecipeArtifact = await persistGeneratedRecipeArtifact(artifacts, recipeJson)
-    const run = parseRecipeRunOutput(capture.stdout)
+    const run = runOutput as unknown as Record<string, unknown>
+    const exitCode = runOutput.success ? 0 : 1
     const runRecord = objectValue(run.run) || {}
     const artifactsRecord = objectValue(run.artifacts) || {}
     const runtimeRecord = objectValue(run.runtime) || {}
@@ -196,10 +181,10 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
         orchestrator: input.orchestrator,
         parent_request_schema: stringValue(input.parent_request?.schema),
       }),
-    }, { exitStatus: capture.exitCode })
+    }, { exitStatus: exitCode })
     const success = normalizedRunResult.success
-    const failureEvidence = success ? undefined : buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, generatedRecipeArtifact, run, capture })
-    const outputDiagnostics = [...diagnostics(run, success ? 0 : capture.exitCode, success, failureEvidence), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])]
+    const failureEvidence = success ? undefined : buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, generatedRecipeArtifact, run })
+    const outputDiagnostics = [...diagnostics(run, success ? 0 : exitCode, success, failureEvidence), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])]
     const agentTaskRunResult = success ? normalizedRunResult : withFailureEvidence(normalizedRunResult, failureEvidence, outputDiagnostics)
     const headlessAgentTaskResult = maybeHeadlessAgentTaskResult(input, agentTaskRunResult)
     const session = sandboxSession(input, run, artifacts, success ? "completed" : "failed")
@@ -268,11 +253,11 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     }
     return output
   } catch (error) {
-    const run = { success: false, error: serializeUnknownError(error) }
+    const run = (runOutput as unknown as Record<string, unknown> | undefined) ?? { success: false, error: serializeUnknownError(error) }
     generatedRecipeArtifact = recipeJson ? await persistGeneratedRecipeArtifact(artifacts, recipeJson) : undefined
-    const normalizedRunResult = normalizeAgentTaskRunResult(run, { exitStatus: capture?.exitCode ?? 1 })
-    const failureEvidence = buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, generatedRecipeArtifact, run, capture, error })
-    const failureDiagnostics = diagnostics(run, capture?.exitCode ?? 1, false, failureEvidence)
+    const normalizedRunResult = normalizeAgentTaskRunResult(run, { exitStatus: 1 })
+    const failureEvidence = buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, generatedRecipeArtifact, run, error })
+    const failureDiagnostics = diagnostics(run, 1, false, failureEvidence)
     const agentTaskRunResult = withFailureEvidence(normalizedRunResult, failureEvidence, failureDiagnostics)
     const headlessAgentTaskResult = maybeHeadlessAgentTaskResult(input, agentTaskRunResult)
     const session = sandboxSession(input, run, artifacts, "failed")
@@ -333,8 +318,6 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
         artifact_result: artifactResult,
       },
     }
-  } finally {
-    await rm(recipeDirectory, { recursive: true, force: true })
   }
 }
 
@@ -450,47 +433,6 @@ function objectRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-async function captureOutput<T>(callback: () => Promise<T>): Promise<CapturedOutput<T>> {
-  const originalWrite = process.stdout.write.bind(process.stdout)
-  const originalErrorWrite = process.stderr.write.bind(process.stderr)
-  let stdout = ""
-  let stderr = ""
-  ;(process.stdout.write as typeof process.stdout.write) = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
-    stdout += typeof chunk === "string" ? chunk : chunk.toString()
-    callWriteCallback(encodingOrCallback, callback)
-    return true
-  }) as typeof process.stdout.write
-  ;(process.stderr.write as typeof process.stderr.write) = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
-    stderr += typeof chunk === "string" ? chunk : chunk.toString()
-    callWriteCallback(encodingOrCallback, callback)
-    return true
-  }) as typeof process.stderr.write
-  try {
-    const result = await callback()
-    return { result, stdout, stderr, exitCode: Number(result) || 0 }
-  } finally {
-    process.stdout.write = originalWrite
-    process.stderr.write = originalErrorWrite
-  }
-}
-
-function callWriteCallback(encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void): void {
-  if (typeof encodingOrCallback === "function") {
-    encodingOrCallback()
-  } else if (callback) {
-    callback()
-  }
-}
-
-function parseRecipeRunOutput(stdout: string): Record<string, unknown> {
-  const trimmed = stdout.trim()
-  if (!trimmed) {
-    return { success: false, error: { message: "WP Codebox recipe run returned no JSON output." } }
-  }
-  const parsed = parseCommandJson(trimmed, "WP Codebox recipe run output")
-  return objectValue(parsed) || { success: false, error: { message: "WP Codebox recipe run returned a non-object JSON value." } }
-}
-
 async function persistGeneratedRecipeArtifact(artifacts: string, contents: string): Promise<GeneratedRecipeArtifactRef> {
   const path = "files/generated-recipe/recipe.json"
   const absolutePath = join(artifacts, path)
@@ -576,8 +518,8 @@ export function buildFailureEvidence(values: FailureEvidenceInput): Record<strin
   const execution = failedExecution(values.run)
   const phase = failedPhase(values.run)
   const errorRecord = objectValue(values.run.error) || serializeUnknownError(values.error)
-  const stdout = stringValue(execution?.stdout) || values.capture?.stdout || ""
-  const stderr = stringValue(execution?.stderr) || values.capture?.stderr || ""
+  const stdout = stringValue(execution?.stdout) || (Array.isArray(values.run.logs) ? values.run.logs.filter((log): log is string => typeof log === "string").join("") : "")
+  const stderr = stringValue(execution?.stderr) || stringValue(errorRecord.message) || ""
   const recipeRunEvidence = stripUndefined({
     schema: stringValue(values.run.schema) || undefined,
     recipe_path: values.generatedRecipeArtifact?.path ?? values.recipePath,
@@ -598,7 +540,7 @@ export function buildFailureEvidence(values: FailureEvidenceInput): Record<strin
     schema: "wp-codebox/agent-task-run-failure-evidence/v1",
     phase: stringValue(execution?.recipePhase) || stringValue(phase?.name) || "agent-task-run",
     command: stringValue(execution?.recipeCommand) || stringValue(execution?.command) || "wp-codebox recipe-run --json",
-    exit_code: numberValue(execution?.exitCode) ?? values.capture?.exitCode ?? 1,
+    exit_code: numberValue(execution?.exitCode) ?? 1,
     message: stringValue(errorRecord.message) || "WP Codebox agent task run failed.",
     task: values.task,
     recipe_run: recipeRunEvidence,

@@ -17,8 +17,8 @@ export interface RecipeRunContext {
 
 export async function createRecipeRunContext(options: RecipeRunOptions): Promise<RecipeRunContext> {
   const recipePath = resolve(options.recipePath)
-  const recipeDirectory = dirname(recipePath)
-  const recipe = await loadWorkspaceRecipe(recipePath)
+  const recipeDirectory = resolve(options.recipeDirectory ?? dirname(recipePath))
+  const recipe = options.recipe ?? await loadWorkspaceRecipe(recipePath)
   const configuredArtifactsDirectory = options.artifactsDirectory ?? recipe.artifacts?.directory
   const runRegistry = new RuntimeRunRegistry(options.runRegistryDirectory ?? defaultRunRegistryDirectory(configuredArtifactsDirectory))
   const startedAtMs = Date.now()
