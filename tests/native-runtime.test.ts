@@ -72,12 +72,13 @@ assert.deepEqual(incompleteBenchmarkCalls, ["destroy"])
 const dockerCalls: string[] = []
 const docker = createDockerNativeRuntimeDriver({
   temporaryDirectory: () => "/tmp",
-  async fetch() { return { status: 200, body: "fixture" } },
+  async fetch(url) { return { status: 200, body: url.includes("install.php") ? "Success! Log In" : "fixture" } },
   async run(command, args) {
-    dockerCalls.push(`${command} ${args.slice(0, 3).join(" ")}`)
+    dockerCalls.push(`${command} ${args.join(" ")}`)
     if (args[0] === "port") return { stdout: "127.0.0.1:49152\n", stderr: "" }
     if (args.some((arg) => arg.includes("PHP_VERSION"))) return { stdout: "8.4.1\napache2handler", stderr: "" }
     if (args.some((arg) => arg.includes("opcache_get_configuration()"))) return { stdout: "{\"directives\":{\"opcache.enable\":true}}", stderr: "" }
+    if (args.some((arg) => arg.includes("get_user_by"))) return { stdout: "ready", stderr: "" }
     return { stdout: "ok", stderr: "" }
   },
 })
@@ -85,9 +86,12 @@ const dockerProvenance = await docker.create(spec)
 assert.equal(dockerProvenance.container.containment, "required")
 assert.equal(dockerProvenance.httpConcurrency.workers, 2)
 assert.equal(dockerProvenance.php.sapi, "apache2handler")
+assert.ok(dockerCalls.some((call) => call.includes("--platform linux/amd64") && call.includes("mariadb:11.4@sha256:8fade42367c1d0505a2c06cfacd411e1bd81c28995183d00935e09b702fd0042")))
+assert.ok(dockerCalls.some((call) => call.includes("--platform linux/amd64") && call.includes("wordpress:php8.4-apache@sha256:b5ad1a1b6fe6f1232d27a6effb0abc45cf71dcac6d6aba0db7d6fcaec047ffb3")))
 await docker.recordProvenance(dockerProvenance)
+await docker.mount({ type: "directory", source: "/fixture", target: "/wordpress/wp-content/plugins/fixture", mode: "readonly" })
+assert.ok(dockerCalls.some((call) => call.includes("cp /fixture/. ") && call.includes(":/var/www/html/wp-content/plugins/fixture")))
 assert.match((await docker.execute({ command: "wordpress.run-php", args: ["code=echo 'ok';"] })).stdout, /ok/)
-assert.match((await docker.execute({ command: "wordpress.browser-actions", args: ["auth=wordpress-admin"] })).stdout, /fixture/)
 const benchmark = await docker.execute({ command: "wordpress.bench" })
 assert.match(benchmark.stdout, /warmNoopPhpMs/)
 const nativeArtifacts = await docker.collectArtifacts()

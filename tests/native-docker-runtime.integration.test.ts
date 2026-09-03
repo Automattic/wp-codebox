@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createDockerNativeRuntimeDriver } from "@automattic/wp-codebox-native"
@@ -15,11 +15,18 @@ if (docker.status !== 0) {
     const provenance = await driver.create({ backend: "wordpress-native", environment: { kind: "wordpress", name: "WordPress", version: "6.8", phpVersion: "8.4" }, policy: { network: "deny", filesystem: "sandbox", commands: ["wordpress.run-php", "wordpress.browser-actions", "wordpress.bench"], secrets: "none", approvals: "never" }, artifactsDirectory })
     assert.equal(provenance.container.containment, "required")
     assert.equal((await driver.execute({ command: "wordpress.run-php", args: ["code=echo 'native-php';"] })).stdout.trim(), "native-php")
-    assert.match((await driver.execute({ command: "wordpress.bench" })).stdout, /dynamicWordPressRequestMs/)
-    assert.ok((await driver.collectArtifacts()).manifestPath.endsWith("manifest.json"))
-    console.log("native Docker runtime integration passed")
+    const browser = await driver.execute({ command: "wordpress.browser-actions", args: ["auth=wordpress-admin", `steps-json=${JSON.stringify([{ kind: "navigate", url: "/wp-admin/", waitFor: "load" }, { kind: "expect", selector: "#wpadminbar", state: "visible" }])}`, "capture=steps,network,console,errors"] })
+    assert.match(browser.stdout, /"authenticated":true/)
+    const benchmark = await driver.execute({ command: "wordpress.bench" })
+    assert.match(benchmark.stdout, /coldStartupMs/)
+    assert.match(benchmark.stdout, /warmNoopPhpMs/)
+    assert.match(benchmark.stdout, /dynamicWordPressRequestMs/)
+    const artifacts = await driver.collectArtifacts()
+    assert.ok(artifacts.manifestPath.endsWith("manifest.json"))
+    assert.match(await readFile(artifacts.observationsPath, "utf8"), /wp-admin/)
+    assert.match(await readFile(join(artifacts.directory, "files/browser/steps.json"), "utf8"), /"passed"/)
+    console.log(`native Docker runtime integration passed; reviewer artifacts retained at ${artifactsDirectory}`)
   } finally {
     await driver.destroy()
-    await rm(artifactsDirectory, { recursive: true, force: true })
   }
 }
