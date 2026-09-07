@@ -14,6 +14,7 @@ export interface HostCommandExecutorConfig {
   maxOutputBytes?: number
   artifactsDirectory?: string
   memorySampleIntervalMs?: number
+  onMemorySample?: (sample: HostCommandMemorySample) => void
   terminationGraceMs?: number
   inheritedEnv?: string[]
   allowedInputEnv?: string[]
@@ -109,7 +110,13 @@ export async function executeHostCommand(config: HostCommandExecutorConfig, inpu
       }
       const task = sampleHostCommandProcessTreeRssBytes(child.pid).then((rssBytes) => {
         if (rssBytes !== undefined) {
-          memorySamples.push({ elapsedMs: Date.now() - started, rssBytes })
+          const sample = { elapsedMs: Date.now() - started, rssBytes }
+          memorySamples.push(sample)
+          try {
+            config.onMemorySample?.(sample)
+          } catch {
+            // Observation callbacks must not affect command execution.
+          }
         }
       }).catch(() => undefined)
       memorySampleTasks.add(task)

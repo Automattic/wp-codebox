@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
-import { mkdir, readFile, realpath } from "node:fs/promises"
-import { join } from "node:path"
+import { watch } from "node:fs"
+import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises"
+import { basename, dirname, join } from "node:path"
 import { classifyHostCommandFailure, executeHostCommand, executeManagedHostCommand, hostCommandEnv, ManagedHostCommandError, resolveAllowedHostCommandCwd } from "../packages/runtime-core/src/index.js"
 import { assertJsonFile, assertTextFile, withTempDir } from "../scripts/test-kit.js"
 
@@ -73,16 +74,34 @@ assert.equal(nonZero.exitCode, 9)
 assert.equal(nonZero.failureClassification, "non_zero_exit")
 
 const artifactsDirectory = join(root, "artifacts")
-const withArtifacts = await executeHostCommand(
+const samplerReadyPath = join(root, "memory-sampler-ready")
+const samplerReleasePath = join(root, "memory-sampler-release")
+let recordMemorySample: (() => void) | undefined
+const memorySampleRecorded = new Promise<void>((resolve) => {
+  recordMemorySample = resolve
+})
+const withArtifactsPromise = executeHostCommand(
   {
     command: process.execPath,
-    args: ["-e", "process.stdout.write('out'); process.stderr.write('err'); setTimeout(() => {}, 250)"],
+    args: ["-e", `const { existsSync, watch, writeFileSync } = require("node:fs"); const readyPath = ${JSON.stringify(samplerReadyPath)}; const releasePath = ${JSON.stringify(samplerReleasePath)}; const finish = () => { if (existsSync(releasePath)) process.exit(0) }; process.stdout.write("out"); process.stderr.write("err"); writeFileSync(readyPath, "ready"); const watcher = watch(${JSON.stringify(root)}, finish); finish();`],
     cwd: allowed,
     artifactsDirectory,
     memorySampleIntervalMs: 20,
+    timeoutMs: 2_000,
+    onMemorySample: () => recordMemorySample?.(),
   },
   {}
 )
+await waitForFile(samplerReadyPath)
+await Promise.race([
+  memorySampleRecorded,
+  withArtifactsPromise.then(
+    () => Promise.reject(new Error("host command exited before recording a memory sample")),
+    (error: unknown) => Promise.reject(error),
+  ),
+])
+await writeFile(samplerReleasePath, "release")
+const withArtifacts = await withArtifactsPromise
 assert.equal(withArtifacts.stdout, "out")
 assert.equal(withArtifacts.stderr, "err")
 assert.ok(withArtifacts.artifacts?.stdout?.path.endsWith("stdout.log"))
@@ -130,6 +149,23 @@ await assert.rejects(
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForFile(path: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const watcher = watch(dirname(path), (_event, filename) => {
+      if (filename !== basename(path)) {
+        return
+      }
+      watcher.close()
+      resolve()
+    })
+    watcher.once("error", reject)
+    void access(path).then(() => {
+      watcher.close()
+      resolve()
+    }).catch(() => undefined)
+  })
 }
 
 async function isProcessRunning(pid: number): Promise<boolean> {
