@@ -853,6 +853,7 @@ interface EditorPresentationCapture {
   canvasDocumentType: "iframe" | "parent"
   iframeCount: number
   stylesheetUrls: string[]
+  loadedStylesheetUrls: string[]
   inlineStyleContents: string[]
 }
 
@@ -872,12 +873,14 @@ function externalStylesheetPresentationIdentity(url: string): string | undefined
 
 export function summarizeEditorPresentation(capture: EditorPresentationCapture, expectedIdentities: readonly string[] = []): BrowserEditorPresentationSummary {
   const iframeStylesheetUrls = [...new Set(capture.stylesheetUrls.map((url) => url.trim()).filter(Boolean))].sort()
+  const loadedStylesheetUrls = new Set(capture.loadedStylesheetUrls.map((url) => url.trim()).filter(Boolean))
   const inlineIdentities = capture.inlineStyleContents.flatMap((content) => [...content.matchAll(/blocks-engine-presentation:([a-f0-9]{64})/gi)].map((match) => match[1]!.toLowerCase()))
   // Only an expected identity can be certified from a URL version. An
   // unrequested or arbitrary version stays out of the observed set so the
   // expected-set comparison remains fail-closed.
   const expected = new Set(expectedIdentities.map((identity) => identity.trim().toLowerCase()).filter(Boolean))
   const externalIdentities = iframeStylesheetUrls.flatMap((url) => {
+    if (!loadedStylesheetUrls.has(url)) return []
     const identity = externalStylesheetPresentationIdentity(url)
     return identity && expected.has(identity) ? [identity] : []
   })
@@ -928,6 +931,9 @@ export async function captureEditorPresentation(page: import("playwright").Page,
         canvasDocumentType,
         iframeCount,
         stylesheetUrls: stylesheets.flatMap((stylesheet) => stylesheet.href ? [stylesheet.href] : []),
+        // A link is not proof of delivery: failed stylesheet requests leave
+        // sheet unset and must not satisfy an expected presentation identity.
+        loadedStylesheetUrls: stylesheets.flatMap((stylesheet) => stylesheet.href && stylesheet.sheet ? [stylesheet.href] : []),
         inlineStyleContents: Array.from(document.querySelectorAll("style"), (style) => style.textContent ?? ""),
       }
     }, { canvasDocumentType, iframeCount: canvasDocumentType === "iframe" ? 1 : 0 }).catch(() => null) as (EditorPresentationCapture & { documentIdentity: string; documentAgeMs: number }) | null
