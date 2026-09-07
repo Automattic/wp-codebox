@@ -116,6 +116,9 @@ export async function executeHostCommand(config: HostCommandExecutorConfig, inpu
       void task.finally(() => memorySampleTasks.delete(task))
     }
     sampleMemory()
+    // The immediate sample can race process-group creation; sample once more
+    // after Node confirms the child has spawned.
+    child.once("spawn", sampleMemory)
     const memoryTimer = setInterval(sampleMemory, memorySampleIntervalMs)
 
     child.stdout?.on("data", (chunk: Buffer) => {
