@@ -995,13 +995,6 @@ if ( ! function_exists( 'set_current_screen' ) ) {
   require_once ABSPATH . 'wp-admin/includes/screen.php';
 }
 set_current_screen( 'post' );
-$wp_styles = wp_styles();
-wp_scripts();
-$queued_before_editor_assets = $wp_styles->queue;
-do_action( 'enqueue_block_assets' );
-$editor_style_handles = array_values( array_diff( $wp_styles->queue, $queued_before_editor_assets ) );
-$wp_styles->all_deps( $editor_style_handles );
-$editor_style_handles = array_values( array_unique( array_merge( $editor_style_handles, $wp_styles->to_do ) ) );
 $settings = get_block_editor_settings( array(), new WP_Block_Editor_Context( array( 'post' => $post ) ) );
 $identities = array();
 foreach ( (array) ( $settings['styles'] ?? array() ) as $style ) {
@@ -1010,10 +1003,19 @@ foreach ( (array) ( $settings['styles'] ?? array() ) as $style ) {
     foreach ( $matches[1] as $identity ) { $identities[] = strtolower( $identity ); }
   }
 }
-foreach ( $editor_style_handles as $handle ) {
-  $style = $wp_styles->registered[$handle] ?? null;
-  $version = is_object( $style ) ? ( $style->ver ?? null ) : null;
-  if ( is_string( $version ) && preg_match( '/^[a-f0-9]{64}$/iD', $version ) ) { $identities[] = strtolower( $version ); }
+// WordPress collects iframe assets in an isolated styles instance, so the
+// resolved asset HTML is the authoritative external stylesheet contract.
+$resolved_styles = (string) ( $settings['__unstableResolvedAssets']['styles'] ?? '' );
+if ( preg_match_all( '~<link\\b[^>]*\\bhref=([^[:space:]>]+)~i', $resolved_styles, $links ) ) {
+  foreach ( $links[1] as $href ) {
+    $url = trim( html_entity_decode( $href, ENT_QUOTES, 'UTF-8' ), chr(34) . chr(39) );
+    $query = wp_parse_url( $url, PHP_URL_QUERY );
+    if ( ! is_string( $query ) ) { continue; }
+    parse_str( $query, $parameters );
+    $version = $parameters['ver'] ?? null;
+    if ( is_array( $version ) ) { continue; }
+    if ( is_string( $version ) && preg_match( '/^[a-f0-9]{64}$/iD', $version ) ) { $identities[] = strtolower( $version ); }
+  }
 }
 $identities = array_values( array_unique( $identities ) );
 sort( $identities, SORT_STRING );
