@@ -72,6 +72,7 @@ const styledPresentation = summarizeEditorPresentation({
   canvasDocumentType: "iframe",
   iframeCount: 2,
   stylesheetUrls: ["https://example.test/styles/editor.css", "https://example.test/styles/editor.css", "https://example.test/styles/theme.css"],
+  loadedStylesheetUrls: ["https://example.test/styles/editor.css", "https://example.test/styles/theme.css"],
   inlineStyleContents: [
     "/* blocks-engine-presentation:ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789 */",
     "/* blocks-engine-presentation:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 */",
@@ -86,7 +87,7 @@ assert.deepEqual(styledPresentation, {
   generatedPresentationIdentityCount: 1,
   generatedPresentationIdentities: ["abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"],
 })
-assert.deepEqual(summarizeEditorPresentation({ canvasDocumentType: "parent", iframeCount: 0, stylesheetUrls: [], inlineStyleContents: [".editor { color: black; }"] }), {
+assert.deepEqual(summarizeEditorPresentation({ canvasDocumentType: "parent", iframeCount: 0, stylesheetUrls: [], loadedStylesheetUrls: [], inlineStyleContents: [".editor { color: black; }"] }), {
   schema: "wp-codebox/editor-presentation/v1",
   canvasDocumentType: "parent",
   iframeCount: 0,
@@ -106,6 +107,7 @@ const externalOnlyPresentation = summarizeEditorPresentation({
   canvasDocumentType: "iframe",
   iframeCount: 1,
   stylesheetUrls: [`https://example.test/wp-content/themes/fixture/assets/a.css?ver=${externalIdentityA.toUpperCase()}`],
+  loadedStylesheetUrls: [`https://example.test/wp-content/themes/fixture/assets/a.css?ver=${externalIdentityA.toUpperCase()}`],
   inlineStyleContents: [],
 }, [externalIdentityA])
 assert.deepEqual(externalOnlyPresentation.generatedPresentationIdentities, [externalIdentityA], "expected external stylesheet version certifies its identity")
@@ -117,6 +119,7 @@ assert.deepEqual(summarizeEditorPresentation({
   canvasDocumentType: "iframe",
   iframeCount: 1,
   stylesheetUrls: [`https://example.test/a.css?ver=${externalIdentityA}`, `https://example.test/b.css?ver=${externalIdentityB}`],
+  loadedStylesheetUrls: [`https://example.test/a.css?ver=${externalIdentityA}`, `https://example.test/b.css?ver=${externalIdentityB}`],
   inlineStyleContents: [`:root{--blocks-engine-presentation:${inlineIdentity};}`],
 }, [externalIdentityA, externalIdentityB]).generatedPresentationIdentities, [externalIdentityA, externalIdentityB, inlineIdentity].sort(), "inline and external identities combine")
 
@@ -130,23 +133,30 @@ assert.deepEqual(summarizeEditorPresentation({
     "https://example.test/b.css?ver=6.7.1",
     "https://example.test/c.css",
   ],
+  loadedStylesheetUrls: [
+    `https://example.test/a.css?ver=${unrequestedIdentity}`,
+    "https://example.test/b.css?ver=6.7.1",
+    "https://example.test/c.css",
+  ],
   inlineStyleContents: [],
 }, [externalIdentityA]).generatedPresentationIdentities, [], "unrequested and non-hash versions are not identities")
 assert.deepEqual(summarizeEditorPresentation({
   canvasDocumentType: "iframe",
   iframeCount: 1,
   stylesheetUrls: [`https://example.test/a.css?ver=${externalIdentityA}`],
+  loadedStylesheetUrls: [`https://example.test/a.css?ver=${externalIdentityA}`],
   inlineStyleContents: [],
 }).generatedPresentationIdentities, [], "no expected set certifies no external identity")
 
-// A delayed stylesheet that has not yet appeared leaves the expected identity
-// unobserved rather than reporting it as satisfied.
+// A failed stylesheet stays visible in the evidence but cannot certify an
+// expected identity.
 assert.deepEqual(summarizeEditorPresentation({
   canvasDocumentType: "iframe",
   iframeCount: 1,
   stylesheetUrls: [`https://example.test/a.css?ver=${externalIdentityA}`],
+  loadedStylesheetUrls: [],
   inlineStyleContents: [],
-}, [externalIdentityA, externalIdentityB]).generatedPresentationIdentities, [externalIdentityA], "a not-yet-loaded stylesheet stays unobserved")
+}, [externalIdentityA, externalIdentityB]).generatedPresentationIdentities, [], "a failed stylesheet stays unobserved")
 
 const idleCanvas = await captureEditorIdleCanvas({
   evaluate: async (callback: () => unknown) => {
