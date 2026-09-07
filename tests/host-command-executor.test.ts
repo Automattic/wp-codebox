@@ -59,7 +59,7 @@ const processTreeTimedOut = await executeHostCommand(
 assert.equal(processTreeTimedOut.failureClassification, "timeout")
 const grandchildPid = Number.parseInt(await readFile(grandchildPidFile, "utf8"), 10)
 await sleep(150)
-assert.equal(isProcessRunning(grandchildPid), false)
+assert.equal(await isProcessRunning(grandchildPid), false)
 
 const nonZero = await executeHostCommand(
   {
@@ -76,15 +76,18 @@ const artifactsDirectory = join(root, "artifacts")
 const withArtifacts = await executeHostCommand(
   {
     command: process.execPath,
-    args: ["-e", "process.stdout.write('out'); process.stderr.write('err'); setTimeout(() => {}, 75)"],
+    args: ["-e", "process.stdout.write('out'); process.stderr.write('err'); setInterval(() => {}, 1000)"],
     cwd: allowed,
     artifactsDirectory,
     memorySampleIntervalMs: 20,
+    timeoutMs: 2_000,
   },
   {}
 )
 assert.equal(withArtifacts.stdout, "out")
 assert.equal(withArtifacts.stderr, "err")
+assert.equal(withArtifacts.timedOut, true)
+assert.equal(withArtifacts.failureClassification, "timeout")
 assert.ok(withArtifacts.artifacts?.stdout?.path.endsWith("stdout.log"))
 assert.ok(withArtifacts.artifacts?.stderr?.path.endsWith("stderr.log"))
 assert.ok(withArtifacts.artifacts?.summary?.path.endsWith("command-summary.json"))
@@ -92,7 +95,7 @@ await assertTextFile(withArtifacts.artifacts!.stdout!.path, "out")
 await assertTextFile(withArtifacts.artifacts!.stderr!.path, "err")
 const artifactSummary = await assertJsonFile<{ schema: string, failureClassification: string, memorySamples: unknown[] }>(withArtifacts.artifacts!.summary!.path)
 assert.equal(artifactSummary.schema, "wp-codebox/host-command-summary/v1")
-assert.equal(artifactSummary.failureClassification, "none")
+assert.equal(artifactSummary.failureClassification, "timeout")
 assert.ok(Array.isArray(artifactSummary.memorySamples))
 assert.ok(withArtifacts.memorySamples.length > 0)
 assert.ok(withArtifacts.peakRssBytes > 0)
@@ -132,10 +135,22 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function isProcessRunning(pid: number): boolean {
+async function isProcessRunning(pid: number): Promise<boolean> {
   try {
     process.kill(pid, 0)
+  } catch {
+    return false
+  }
+
+  if (process.platform !== "linux") {
     return true
+  }
+
+  // A timeout-killed descendant can remain as a zombie briefly while its new
+  // parent reaps it. It is already terminated and cannot execute further.
+  try {
+    const stat = await readFile(`/proc/${pid}/stat`, "utf8")
+    return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z"
   } catch {
     return false
   }

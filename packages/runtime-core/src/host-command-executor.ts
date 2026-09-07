@@ -109,13 +109,17 @@ export async function executeHostCommand(config: HostCommandExecutorConfig, inpu
       }
       const task = sampleHostCommandProcessTreeRssBytes(child.pid).then((rssBytes) => {
         if (rssBytes !== undefined) {
-          memorySamples.push({ elapsedMs: Date.now() - started, rssBytes })
+          const sample = { elapsedMs: Date.now() - started, rssBytes }
+          memorySamples.push(sample)
         }
       }).catch(() => undefined)
       memorySampleTasks.add(task)
       void task.finally(() => memorySampleTasks.delete(task))
     }
     sampleMemory()
+    // The immediate sample can race process-group creation; sample once more
+    // after Node confirms the child has spawned.
+    child.once("spawn", sampleMemory)
     const memoryTimer = setInterval(sampleMemory, memorySampleIntervalMs)
 
     child.stdout?.on("data", (chunk: Buffer) => {
