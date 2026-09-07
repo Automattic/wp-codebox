@@ -59,7 +59,7 @@ const processTreeTimedOut = await executeHostCommand(
 assert.equal(processTreeTimedOut.failureClassification, "timeout")
 const grandchildPid = Number.parseInt(await readFile(grandchildPidFile, "utf8"), 10)
 await sleep(150)
-assert.equal(isProcessRunning(grandchildPid), false)
+assert.equal(await isProcessRunning(grandchildPid), false)
 
 const nonZero = await executeHostCommand(
   {
@@ -76,7 +76,7 @@ const artifactsDirectory = join(root, "artifacts")
 const withArtifacts = await executeHostCommand(
   {
     command: process.execPath,
-    args: ["-e", "process.stdout.write('out'); process.stderr.write('err'); setTimeout(() => {}, 75)"],
+    args: ["-e", "process.stdout.write('out'); process.stderr.write('err'); setTimeout(() => {}, 250)"],
     cwd: allowed,
     artifactsDirectory,
     memorySampleIntervalMs: 20,
@@ -132,10 +132,22 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function isProcessRunning(pid: number): boolean {
+async function isProcessRunning(pid: number): Promise<boolean> {
   try {
     process.kill(pid, 0)
+  } catch {
+    return false
+  }
+
+  if (process.platform !== "linux") {
     return true
+  }
+
+  // A timeout-killed descendant can remain as a zombie briefly while its new
+  // parent reaps it. It is already terminated and cannot execute further.
+  try {
+    const stat = await readFile(`/proc/${pid}/stat`, "utf8")
+    return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z"
   } catch {
     return false
   }

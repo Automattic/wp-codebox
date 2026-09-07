@@ -14,6 +14,9 @@ const originalContainedRuntimeComponentPaths = process.env.CONTAINED_RUNTIME_COM
 
 try {
   chdir(root)
+  // This case verifies discovery from the current workspace, not a configured
+  // deployment path inherited by the test runner.
+  delete process.env.WP_CODEBOX_AGENTS_API_PATH
 
   const runtimeHost = join(root, "runtime-host")
   const agentsApi = join(runtimeHost, "vendor", "wordpress", "agents-api")
