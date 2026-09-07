@@ -1,6 +1,6 @@
 {
   "name": "@php-wasm/node-8-3",
-  "version": "3.1.46",
+  "version": "3.1.52",
   "description": "PHP 8.3 WebAssembly binaries for node",
   "repository": {
     "type": "git",
@@ -35,9 +35,10 @@
     "node": ">=20.10.0",
     "npm": ">=10.2.3"
   },
+  "gitHead": "a6ed3872674399baa47c2f55fe1e660633fc8051",
   "dependencies": {
     "wasm-feature-detect": "1.8.0",
-    "@php-wasm/universal": "3.1.46"
+    "@php-wasm/universal": "3.1.52"
   },
   "packageManager": "npm@10.9.2",
   "overrides": {

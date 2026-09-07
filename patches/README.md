@@ -1,6 +1,7 @@
 # Temporary Playground Overlay
 
-`@wp-playground+cli+3.1.46.patch` makes blueprint worker threads rethrow fatal
+`@wp-playground+cli+3.1.52.patch` passes runtime environment variables into PHP
+worker threads and makes those workers rethrow fatal
 `WebAssembly.RuntimeError` rejections originating from `php.wasm` after logging
 them. Detection uses the error name because PHP-WASM errors may cross JavaScript
 realm boundaries where `instanceof` is false. Other unhandled rejections retain

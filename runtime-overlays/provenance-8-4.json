@@ -1,0 +1,12 @@
+{
+  "schema": "wp-codebox/php-wasm-overlay-provenance/v1",
+  "upstream": {
+    "repository": "WordPress/wordpress-playground",
+    "revision": "7e856437978520f5030691816f47b0f8eecda43a"
+  },
+  "artifact": {
+    "directory": "php-wasm-node-8-4",
+    "source_description": "Published 3.1.52 package with JSPI runtime artifacts replaced from merged PR 4108",
+    "tree_sha256": "348343fa13c1100c08033c7eb7d1cabacf4bbf93dc5468fefe94522aa502e4a8"
+  }
+}

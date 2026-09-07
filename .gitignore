@@ -7,7 +7,11 @@ artifacts/
 runtime-overlays/*
 !runtime-overlays/php-wasm-node-8-3/
 !runtime-overlays/php-wasm-node-8-3/**
+runtime-overlays/php-wasm-node-8-3/node_modules/
+!runtime-overlays/php-wasm-node-8-4/
+!runtime-overlays/php-wasm-node-8-4/**
 !runtime-overlays/provenance.json
+!runtime-overlays/provenance-8-4.json
 scripts/uploads/
 *.tsbuildinfo
 .DS_Store

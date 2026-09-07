@@ -129,7 +129,8 @@ try {
       assert.equal(packageStat.isSymbolicLink(), false, `${packagePath} must not depend on archive symlinks`)
       await lstat(join(packagePath, "package.json"))
     }
-    await assertPinnedPhpWasmOverlay(root, join(root, "php-wasm-overlay-provenance.json"))
+    await assertPinnedPhpWasmOverlay(root, join(root, "php-wasm-overlay-provenance.json"), false, "8-3")
+    await assertPinnedPhpWasmOverlay(root, join(root, "php-wasm-node-8-4-overlay-provenance.json"), false, "8-4")
     const cliEntrypoint = join(root, "packages", "cli", "dist", "index.js")
     assert.equal((await lstat(cliEntrypoint)).mode & 0o777, 0o755, `${cliEntrypoint} must be executable after extraction`)
     assert.deepEqual(
@@ -208,6 +209,7 @@ try {
   assert.ok((await realpath(pinnedPhpWasm)).startsWith(`${await realpath(installedPackage)}/`), "installed php-wasm overlay must resolve inside the consumer package")
   assert.equal(JSON.parse(await readFile(join(pinnedPhpWasm, "package.json"), "utf8")).version, "3.1.46")
   await assertPinnedPhpWasmOverlay(installedPackage, join(installedPackage, "runtime-overlays", "provenance.json"), true)
+  await assertPinnedPhpWasmOverlay(installedPackage, join(installedPackage, "runtime-overlays", "provenance-8-4.json"), true, "8-4")
   const installedCli = join(installRoot, "bin", "wp-codebox")
   const { stdout: installedVersion } = await execFileAsync(installedCli, ["--version"])
   assert.match(installedVersion, /^\d+\.\d+\.\d+\s*$/)
@@ -236,12 +238,13 @@ async function assertCliStartsWithoutSharpRuntime(root: string, cliEntrypoint: s
   }
 }
 
-async function assertPinnedPhpWasmOverlay(root: string, provenancePath: string, allowInternalSymlink = false): Promise<void> {
-  const overlay = join(root, "node_modules", "@php-wasm", "node-8-3")
+async function assertPinnedPhpWasmOverlay(root: string, provenancePath: string, allowInternalSymlink = false, phpVersion = "8-3"): Promise<void> {
+  const overlay = join(root, "node_modules", "@php-wasm", `node-${phpVersion}`)
   const overlayStat = await lstat(overlay)
   if (!allowInternalSymlink) {
     assert.equal(overlayStat.isDirectory(), true, "pinned php-wasm overlay must be a materialized directory")
     assert.equal(overlayStat.isSymbolicLink(), false, "release artifacts must not retain a staging symlink")
+    await assert.rejects(lstat(join(overlay, "node_modules")), { code: "ENOENT" }, "release artifacts must not contain overlay-local dependencies")
   }
   const provenance = JSON.parse(await readFile(provenancePath, "utf8")) as { artifact?: { tree_sha256?: string } }
   assert.equal(await digestDirectory(overlay), provenance.artifact?.tree_sha256, "pinned php-wasm overlay does not match provenance")
@@ -252,6 +255,7 @@ async function digestDirectory(root: string): Promise<string> {
   const files: string[] = []
   async function walk(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name === "node_modules") continue
       const path = join(directory, entry.name)
       if (entry.isDirectory()) await walk(path)
       else files.push(path)
