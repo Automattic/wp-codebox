@@ -33,6 +33,37 @@ export interface RuntimeExternalHttpLoadSample {
   errorCode?: "fetch-failed" | "response-read-failed"
 }
 
+const RUNTIME_PREVIEW_READINESS_TIMEOUT_MS = 10_000
+const RUNTIME_PREVIEW_READINESS_MAX_REDIRECTS = 3
+
+export async function waitForRuntimePreviewReady(runtimeBaseUrl: string): Promise<void> {
+  const origin = new URL(runtimeBaseUrl)
+  let readinessUrl = new URL("/", origin)
+  const signal = AbortSignal.timeout(RUNTIME_PREVIEW_READINESS_TIMEOUT_MS)
+
+  for (let redirectCount = 0; redirectCount <= RUNTIME_PREVIEW_READINESS_MAX_REDIRECTS; redirectCount++) {
+    const response = await fetch(readinessUrl, { redirect: "manual", signal })
+    await response.arrayBuffer()
+    if (response.status < 300 || response.status >= 400) {
+      if (!response.ok) {
+        throw new Error(`runtime preview readiness returned HTTP ${response.status}`)
+      }
+      return
+    }
+
+    const location = response.headers.get("location")
+    if (!location) {
+      throw new Error("runtime preview readiness redirect is missing Location")
+    }
+    readinessUrl = new URL(location, readinessUrl)
+    if (readinessUrl.origin !== origin.origin) {
+      throw new Error("runtime preview readiness redirect leaves the preview origin")
+    }
+  }
+
+  throw new Error(`runtime preview readiness exceeded ${RUNTIME_PREVIEW_READINESS_MAX_REDIRECTS} same-origin redirects`)
+}
+
 export async function runRuntimeExternalHttpLoad(action: Record<string, unknown>, runtimeBaseUrl?: string): Promise<RuntimeExternalHttpLoadResult> {
   if (!runtimeBaseUrl) {
     throw new Error("external_http_load requires an active runtime preview origin")
