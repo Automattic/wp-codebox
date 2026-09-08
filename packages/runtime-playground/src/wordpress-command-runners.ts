@@ -56,7 +56,7 @@ import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic, readPluginPhpunitDiscoveryResult } from "./runtime-diagnostics.js"
 import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } from "./phpunit-command-semantics.js"
 import { parsePhpunitOutput } from "./phpunit-test-results.js"
-import { runRuntimeExternalHttpLoad, type RuntimeExternalHttpLoadResult } from "./external-http-load.js"
+import { runRuntimeExternalHttpLoad, waitForRuntimePreviewReady, type RuntimeExternalHttpLoadResult } from "./external-http-load.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, PERFORMANCE_OBSERVATION_SCHEMA, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
 import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
@@ -1175,6 +1175,9 @@ async function benchMergeExternalHttpLoadResults(
   if (plans.length === 0) {
     return text
   }
+
+  // Playground's one-time auto-login redirect belongs to startup, not a measured sample.
+  await waitForRuntimePreviewReady(options.baseUrl)
 
   const results = JSON.parse(text) as { schema?: string; scenarios?: Array<Record<string, any>>; provenance?: Record<string, any> }
   if (results.schema !== "wp-codebox/bench-results/v1" || !Array.isArray(results.scenarios)) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { runRuntimeExternalHttpLoad } from "../packages/runtime-playground/src/external-http-load.ts"
+import { runRuntimeExternalHttpLoad, waitForRuntimePreviewReady } from "../packages/runtime-playground/src/external-http-load.ts"
 
 let activeRequests = 0
 let maxActiveRequests = 0
@@ -9,6 +9,7 @@ let receivedMethod = ""
 let receivedBody = ""
 let receivedSecret = ""
 let redirectTargetRequests = 0
+let readinessRequests = 0
 
 const redirectTarget = createServer((_request, response) => {
   redirectTargetRequests++
@@ -18,7 +19,23 @@ await listen(redirectTarget)
 const redirectTargetAddress = redirectTarget.address()
 assert.ok(redirectTargetAddress && typeof redirectTargetAddress === "object")
 
+const readinessRedirector = createServer((_request, response) => {
+  response.writeHead(302, { location: `http://127.0.0.1:${redirectTargetAddress.port}/outside` }).end()
+})
+await listen(readinessRedirector)
+const readinessRedirectorAddress = readinessRedirector.address()
+assert.ok(readinessRedirectorAddress && typeof readinessRedirectorAddress === "object")
+
 const runtime = createServer(async (request, response) => {
+  if (request.url === "/") {
+    readinessRequests++
+    if (readinessRequests === 1) {
+      response.writeHead(302, { location: "/" }).end()
+      return
+    }
+    response.writeHead(204).end()
+    return
+  }
   if (request.url === "/broken") {
     response.destroy()
     return
@@ -51,6 +68,11 @@ assert.ok(runtimeAddress && typeof runtimeAddress === "object")
 const runtimeUrl = `http://127.0.0.1:${runtimeAddress.port}`
 
 try {
+  await waitForRuntimePreviewReady(runtimeUrl)
+  assert.equal(readinessRequests, 2)
+  await assert.rejects(waitForRuntimePreviewReady(`http://127.0.0.1:${readinessRedirectorAddress.port}`), /leaves the preview origin/)
+  assert.equal(redirectTargetRequests, 0)
+
   const matched = await runRuntimeExternalHttpLoad({
     url: "/matched",
     method: "POST",
@@ -124,6 +146,7 @@ try {
   assert.equal(redirectTargetRequests, 0)
 } finally {
   await close(runtime)
+  await close(readinessRedirector)
   await close(redirectTarget)
 }
 
