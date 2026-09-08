@@ -1209,6 +1209,9 @@ async function benchMergeExternalHttpLoadResults(
         measured.push(result)
       }
     }
+    if (measured.length !== options.iterations || measured.some((result) => result.samples.length !== result.requestCount)) {
+      throw new Error(`external-http-load did not collect every measured request sample for scenario ${plan.scenarioId}`)
+    }
 
     const prefix = benchExternalHttpMetricPrefix(plan.step)
     scenario.metrics ??= {}
@@ -1241,6 +1244,7 @@ async function benchMergeExternalHttpLoadResults(
       requestCount: artifact.requestCount,
       concurrency: artifact.concurrency,
       maxObservedConcurrency: artifact.maxObservedConcurrency,
+      warmupIterations: options.warmupIterations,
       iterations: measured.length,
       provenance: artifact.provenance,
     })
@@ -1307,9 +1311,11 @@ function benchAggregateExternalHttpLoadResults(results: RuntimeExternalHttpLoadR
     statusDistribution,
     durationMs: results.reduce((sum, result) => sum + result.durationMs, 0),
     latenciesMs,
+    samples: results.flatMap((result) => result.samples),
     latency: benchNumericSummary(latenciesMs),
     runs: results,
     diagnostics: results.flatMap((result) => result.diagnostics),
+    conditions: first.conditions ?? {},
     provenance: first.provenance ?? {},
   }
 }

@@ -49,6 +49,8 @@ await withTempDir("wp-codebox-external-http-load-integration-", async (artifactR
               successCount: number
               failureCount: number
               maxObservedConcurrency: number
+              samples: Array<{ requestIndex: number; status: number; durationMs: number; outcome: string }>
+              runs: Array<{ samples: unknown[] }>
               provenance: { source: string; transport: string; runtimeScope: string }
             }>
           }>
@@ -67,6 +69,10 @@ await withTempDir("wp-codebox-external-http-load-integration-", async (artifactR
   assert.equal(load.successCount, 4)
   assert.equal(load.failureCount, 0)
   assert.equal(load.maxObservedConcurrency, 2)
+  assert.equal(load.samples.length, 4)
+  assert.deepEqual(load.samples.map((sample) => sample.status), [200, 200, 200, 200])
+  assert.ok(load.samples.every((sample) => sample.durationMs >= 0 && sample.outcome === "matched-status"))
+  assert.equal(load.runs.length, 1)
   assert.deepEqual(load.provenance, {
     source: "host-side-external-http",
     transport: "runtime-preview-http",

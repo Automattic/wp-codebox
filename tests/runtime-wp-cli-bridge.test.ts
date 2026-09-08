@@ -61,6 +61,10 @@ try {
 let activeRequests = 0
 let maxActiveRequests = 0
 const target = createServer(async (_request, response) => {
+  if (_request.url === "/broken") {
+    response.destroy()
+    return
+  }
   activeRequests++
   maxActiveRequests = Math.max(maxActiveRequests, activeRequests)
   await delay(30)
@@ -102,6 +106,10 @@ try {
   assert.equal(maxActiveRequests, 3)
   assert.deepEqual(loadResponse.statusDistribution, { 204: 8 })
   assert.equal(loadResponse.latenciesMs.length, 8)
+  assert.equal(loadResponse.samples.length, 8)
+  assert.deepEqual(loadResponse.samples.map((sample) => sample.status), Array.from({ length: 8 }, () => 204))
+  assert.deepEqual(loadResponse.samples.map((sample) => sample.outcome), Array.from({ length: 8 }, () => "matched-status"))
+  assert.ok(loadResponse.samples.every((sample) => sample.durationMs >= 0))
   assert.equal(loadResponse.provenance.source, "host-side-external-http")
   assert.equal(loadResponse.provenance.runtimeScope, "single-runtime")
 
@@ -114,6 +122,20 @@ try {
   assert.equal(statusFailure.success, false)
   assert.equal(statusFailure.failureCount, 2)
   assert.equal(statusFailure.diagnostics[0].code, "unexpected_status")
+  assert.deepEqual(statusFailure.samples.map((sample) => sample.outcome), ["unexpected-status", "unexpected-status"])
+
+  const transportFailure = await runRuntimeExternalHttpLoad({
+    url: "/broken",
+    requestCount: 1,
+    concurrency: 1,
+    expectedStatuses: [204],
+  }, targetUrl)
+  assert.equal(transportFailure.success, false)
+  assert.equal(transportFailure.completedCount, 1)
+  assert.equal(transportFailure.failureCount, 1)
+  assert.deepEqual(transportFailure.samples, [{ requestIndex: 0, durationMs: transportFailure.samples[0].durationMs, outcome: "request-error", errorCode: "fetch-failed" }])
+  assert.equal(transportFailure.diagnostics[0].code, "request_failed")
+  assert.equal(typeof transportFailure.diagnostics[0].errorType, "string")
 } finally {
   await new Promise<void>((resolve, reject) => target.close((error) => error ? reject(error) : resolve()))
 }

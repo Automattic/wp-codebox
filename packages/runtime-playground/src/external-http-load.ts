@@ -10,8 +10,12 @@ export interface RuntimeExternalHttpLoadResult {
   statusDistribution: Record<string, number>
   durationMs: number
   latenciesMs: number[]
+  samples: RuntimeExternalHttpLoadSample[]
   latency: Record<string, number>
   diagnostics: Array<Record<string, unknown>>
+  conditions: {
+    expectedStatuses: number[]
+  }
   provenance: {
     source: "host-side-external-http"
     transport: "runtime-preview-http"
@@ -19,6 +23,14 @@ export interface RuntimeExternalHttpLoadResult {
     target: string
     method: string
   }
+}
+
+export interface RuntimeExternalHttpLoadSample {
+  requestIndex: number
+  durationMs: number
+  status?: number
+  outcome: "matched-status" | "unexpected-status" | "request-error"
+  errorCode?: "fetch-failed" | "response-read-failed"
 }
 
 export async function runRuntimeExternalHttpLoad(action: Record<string, unknown>, runtimeBaseUrl?: string): Promise<RuntimeExternalHttpLoadResult> {
@@ -45,6 +57,7 @@ export async function runRuntimeExternalHttpLoad(action: Record<string, unknown>
   const expectedStatuses = normalizeExpectedStatuses(action.expectedStatuses ?? (action.expectedStatus === undefined ? undefined : [action.expectedStatus]))
   const statusDistribution: Record<string, number> = {}
   const latenciesMs: number[] = []
+  const samples: RuntimeExternalHttpLoadSample[] = []
   const diagnostics: Array<Record<string, unknown>> = []
   let nextRequest = 0
   let activeRequests = 0
@@ -64,20 +77,34 @@ export async function runRuntimeExternalHttpLoad(action: Record<string, unknown>
       maxObservedConcurrency = Math.max(maxObservedConcurrency, activeRequests)
       const started = performance.now()
       try {
-        const response = await fetch(resolvedUrl, { method, headers, body })
+        const response = await fetch(resolvedUrl, { method, headers, body, redirect: "error" })
         statusDistribution[String(response.status)] = (statusDistribution[String(response.status)] ?? 0) + 1
-        await response.arrayBuffer()
-        latenciesMs.push(performance.now() - started)
+        try {
+          await response.arrayBuffer()
+        } catch {
+          const durationMs = performance.now() - started
+          latenciesMs.push(durationMs)
+          samples.push({ requestIndex, durationMs, status: response.status, outcome: "request-error", errorCode: "response-read-failed" })
+          failureCount++
+          diagnostics.push({ code: "response_read_failed", requestIndex, actualStatus: response.status })
+          continue
+        }
+        const durationMs = performance.now() - started
+        latenciesMs.push(durationMs)
         if (expectedStatuses.includes(response.status)) {
           successCount++
+          samples.push({ requestIndex, durationMs, status: response.status, outcome: "matched-status" })
         } else {
           failureCount++
+          samples.push({ requestIndex, durationMs, status: response.status, outcome: "unexpected-status" })
           diagnostics.push({ code: "unexpected_status", requestIndex, expectedStatuses, actualStatus: response.status })
         }
       } catch (error) {
-        latenciesMs.push(performance.now() - started)
+        const durationMs = performance.now() - started
+        latenciesMs.push(durationMs)
+        samples.push({ requestIndex, durationMs, outcome: "request-error", errorCode: "fetch-failed" })
         failureCount++
-        diagnostics.push({ code: "request_failed", requestIndex, message: errorMessage(error) })
+        diagnostics.push({ code: "request_failed", requestIndex, errorType: errorType(error) })
       } finally {
         completedCount++
         activeRequests--
@@ -102,8 +129,10 @@ export async function runRuntimeExternalHttpLoad(action: Record<string, unknown>
     statusDistribution,
     durationMs: performance.now() - loadStarted,
     latenciesMs,
+    samples,
     latency: numericSummary(latenciesMs),
     diagnostics,
+    conditions: { expectedStatuses },
     provenance: {
       source: "host-side-external-http",
       transport: "runtime-preview-http",
@@ -154,6 +183,6 @@ function numericSummary(values: number[]): Record<string, number> {
   }
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+function errorType(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "unknown"
 }
