@@ -49,6 +49,46 @@ The command contract is intentionally broad enough for future workload types:
 - **REST DB query profile:** configured `rest-db-query-profiler` steps run one or more REST request cases, bracket each request with `$wpdb->queries`, and emit bounded, redacted query-profile metrics and artifacts.
 - **Database inventory:** configured `db-inventory` steps collect table, row, column, index, and byte-count inventory through the benchmark artifact path.
 - **Browser:** `wordpress.browser-probe` captures generic browser performance and memory artifacts. When a recipe runs browser probes before `wordpress.bench`, selected numeric `browser_*` metrics are promoted into each benchmark scenario while raw browser artifacts remain in the bundle.
+- **Runtime HTTP load:** configured `external-http-load` steps issue bounded concurrent requests through the managed runtime preview. The workload accepts a runtime-relative `url`, `method`, `headers`, `body`, `requestCount` (1-100), `concurrency` (1-20), and `expectedStatus` or `expectedStatuses`. It executes the benchmark's configured warmup iterations before measured iterations, rejects a non-matching status or incomplete sample set, and records measured request status, duration, and a safe outcome/error code without response bodies or request headers.
+
+## Runtime HTTP Load
+
+Use `external-http-load` for an HTTP workload against the runtime created for the
+benchmark. Its target must resolve to that runtime's preview origin; it cannot
+be used as an arbitrary outbound HTTP client. This keeps the workload contained
+while permitting any runtime-relative route and HTTP method.
+
+```json
+{
+  "id": "frontend-request",
+  "source": "config",
+  "run": [
+    {
+      "type": "external-http-load",
+      "url": "/example-route?mode=measured",
+      "method": "POST",
+      "headers": { "content-type": "application/json" },
+      "body": "{\"enabled\":true}",
+      "requestCount": 12,
+      "concurrency": 3,
+      "expectedStatuses": [200, 204]
+    }
+  ]
+}
+```
+
+The scenario artifact uses `wp-codebox/wordpress-external-http-load/v1`. Its
+`samples` contain `requestIndex`, `durationMs`, actual `status` when one was
+received, and `matched-status`, `unexpected-status`, or `request-error` outcome.
+The `conditions.expectedStatuses` field states the assertion used for every
+sample. Transport errors use stable error codes rather than raw transport
+messages. The artifact includes only measured iterations; its benchmark step
+records both the executed `warmupIterations` and measured `iterations`.
+
+For instrumentation of outbound requests made by PHP while the workload runs,
+pair this workload with the existing `external-http-guardrail` install/collect
+steps. That WordPress HTTP API hook provides bounded event evidence separately
+from preview-request timing.
 
 ## REST DB Query Profiler
 
