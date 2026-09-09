@@ -58,7 +58,7 @@ import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } fr
 import { parsePhpunitOutput } from "./phpunit-test-results.js"
 import { runRuntimeExternalHttpLoad, waitForRuntimePreviewReady, type RuntimeExternalHttpLoadResult } from "./external-http-load.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
-import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, PERFORMANCE_OBSERVATION_SCHEMA, captureArtifactFile, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
+import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, PERFORMANCE_OBSERVATION_SCHEMA, captureArtifactFile, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef, type WorkspaceRecipeResultPath } from "@automattic/wp-codebox-core"
 import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
 import { executeHostHttpTransportRequest, parseHostHttpTransportMessage } from "./host-http-transport.js"
 
@@ -1022,6 +1022,7 @@ export async function runPhpunitCommand({
   } catch (error) {
     await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)
     await persistVfsDiagnosticFileToHost(server, resultFile, diagnosticHostFile, mounts)
+    await captureCommandResultPaths(server, spec, artifactRoot)
     const completed = await readPluginPhpunitCompletedResult(server, resultFile) ?? parsePhpunitOutput(playgroundCommandDiagnosticText(error))
     if (completed) {
       await persistPluginPhpunitCompletedResult(artifactRoot, completed, processIdentity)
@@ -1064,23 +1065,21 @@ export async function runPhpunitCommand({
   })
 }
 
-async function captureCommandResultPaths(server: PlaygroundCliServer, spec: ExecutionSpec, artifactRoot: string): Promise<RuntimeEpisodeTraceRef[]> {
+export async function captureCommandResultPaths(server: Pick<PlaygroundCliServer, "playground">, spec: Pick<ExecutionSpec, "resultPaths">, artifactRoot: string): Promise<RuntimeEpisodeTraceRef[]> {
   const declarations = spec.resultPaths ?? []
   if (declarations.length === 0) return []
   if (!server.playground.readFileAsText) {
     throw resultPathCollectionError("runtime does not support direct VFS result capture")
   }
 
+  validateResultPathDeclarations(declarations)
   const refs: RuntimeEpisodeTraceRef[] = []
-  for (const declaration of declarations) {
-    if (!declaration.path.startsWith("/") || declaration.path.includes("\0") || declaration.path.split("/").includes("..")) {
-      throw resultPathCollectionError(`invalid result path: ${declaration.path}`)
-    }
+  for (const [index, declaration] of declarations.entries()) {
     try {
       const contents = await server.playground.readFileAsText(declaration.path)
       const bytes = Buffer.byteLength(contents, "utf8")
-      const maxBytes = declaration.maxBytes ?? 1024 * 1024
-      if (bytes > maxBytes) throw resultPathCollectionError(`result path exceeds ${maxBytes} bytes: ${declaration.path}`)
+      const maxBytes = declaration.maxBytes ?? DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES
+      if (bytes > maxBytes) throw resultPathCollectionError(`result path ${index + 1} exceeds its byte limit`)
       JSON.parse(contents)
       const captured = await captureArtifactFile({
         root: artifactRoot,
@@ -1092,15 +1091,35 @@ async function captureCommandResultPaths(server: PlaygroundCliServer, spec: Exec
         redaction: { policy: "applied", sensitive: true, reason: "Command result JSON is redacted before artifact capture." },
         provenance: { source: "wordpress-playground", operation: "capture-command-result-path", id: declaration.path },
       })
-      if (captured.status !== "captured") throw resultPathCollectionError(`could not capture result path: ${declaration.path}`)
-      if (!captured.sha256) throw resultPathCollectionError(`captured result path has no digest: ${declaration.path}`)
+      if (captured.status !== "captured") throw resultPathCollectionError(`could not capture result path ${index + 1}`)
+      if (!captured.sha256) throw resultPathCollectionError(`captured result path ${index + 1} has no digest`)
       refs.push({ kind: declaration.type, id: declaration.name, path: captured.path, sourcePath: declaration.path, contentType: captured.contentType ?? "application/json", digest: { algorithm: "sha256", value: captured.sha256 } })
     } catch (error) {
       if (declaration.required === false) continue
-      throw resultPathCollectionError(`required result path is unavailable: ${declaration.path}`, error)
+      throw resultPathCollectionError(`required result path ${index + 1} is unavailable`, error)
     }
   }
   return refs
+}
+
+function validateResultPathDeclarations(declarations: readonly WorkspaceRecipeResultPath[]): void {
+  if (declarations.length > 16) throw resultPathCollectionError("result path count exceeds 16")
+  const names = new Set<string>()
+  const paths = new Set<string>()
+  for (const [index, declaration] of declarations.entries()) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(declaration.name)) throw resultPathCollectionError(`result path ${index + 1} has an invalid artifact name`)
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$/.test(declaration.type)) throw resultPathCollectionError(`result path ${index + 1} has an invalid artifact type`)
+    if (declaration.path.length > 1024 || declaration.path.trim() !== declaration.path || !declaration.path.startsWith("/") || declaration.path.includes("\0") || declaration.path.split("/").some((segment) => segment === "." || segment === "..")) {
+      throw resultPathCollectionError(`result path ${index + 1} is not a canonical absolute sandbox path`)
+    }
+    if (!Number.isInteger(declaration.maxBytes ?? DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES) || (declaration.maxBytes ?? DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES) < 1 || (declaration.maxBytes ?? DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES) > 16 * 1024 * 1024) {
+      throw resultPathCollectionError(`result path ${index + 1} has an invalid byte limit`)
+    }
+    if (names.has(declaration.name)) throw resultPathCollectionError(`result path ${index + 1} duplicates an artifact name`)
+    if (paths.has(declaration.path)) throw resultPathCollectionError(`result path ${index + 1} duplicates a source path`)
+    names.add(declaration.name)
+    paths.add(declaration.path)
+  }
 }
 
 function resultPathCollectionError(message: string, cause?: unknown): Error {

@@ -1274,9 +1274,9 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         additionalProperties: false,
         required: ["name", "type", "path"],
         properties: {
-          name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
-          type: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$" },
-          path: { type: "string", pattern: "^/" },
+          name: { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          type: { type: "string", minLength: 1, maxLength: 256, pattern: "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$" },
+          path: { type: "string", minLength: 1, maxLength: 1024, pattern: "^/" },
           required: { type: "boolean" },
           maxBytes: { type: "integer", minimum: 1, maximum: 16777216 },
         },
