@@ -747,6 +747,7 @@ assert.ok(preinstallCode.includes("@file_put_contents($result_file, '');"), "mul
 assert.ok(preinstallCode.includes("STAGE_FAIL:preinstall:"), "multisite preinstall records throwable diagnostics")
 assert.ok(preinstallCode.includes("STAGE_FATAL:preinstall:"), "multisite preinstall records fatal diagnostics")
 assert.ok(preinstallCode.includes("pg_preinstall_log('before-installer-include')"), "multisite preinstall records its installer boundary")
+assert.ok(preinstallCode.includes("installer-blogs:"), "multisite preinstall records its canonical blog rows")
 
 const mysqlMultisiteInvocations: string[] = []
 await runPhpunitCommand({
@@ -772,6 +773,7 @@ assert.ok(mysqlMultisiteInvocations[1].includes("$phpunit_argv = pg_build_phpuni
 assert.ok(mysqlMultisiteInvocations[1].includes("$managed_multisite_preinstalled = true"), "main managed invocation receives the canonical preinstall result")
 assert.ok(mysqlMultisiteInvocations[1].includes("pg_run_preinstalled_wordpress_stage"), "main managed invocation boots the canonical schema without reinstalling it")
 assert.ok(mysqlMultisiteInvocations[1].includes("define('WP_INSTALLING', true)"), "canonical preinstalled boot retains wp-phpunit's installation context")
+assert.ok(mysqlMultisiteInvocations[1].includes("PREINSTALLED_BLOGS:"), "canonical preinstalled boot records its visible blog rows")
 
 const nativeMultisiteInvocations: string[] = []
 await runPhpunitCommand({

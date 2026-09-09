@@ -506,6 +506,7 @@ $_SERVER['argc'] = count($argv);
 try {
     pg_preinstall_log('before-installer-include');
     require $tests_dir . '/includes/install.php';
+    pg_preinstall_log('installer-blogs:' . implode(',', array_map('strval', (array) $wpdb->get_col("SELECT blog_id FROM {\$wpdb->blogs} ORDER BY blog_id"))));
     $preinstall_complete = true;
     pg_preinstall_log('installer-complete');
 } catch (Throwable $error) {
@@ -1157,6 +1158,7 @@ function pg_run_preinstalled_wordpress_stage(array $cfg): void {
         if (is_dir($tests_dir . '/data/themedir1')) {
             register_theme_directory($tests_dir . '/data/themedir1');
         }
+        pg_log('PREINSTALLED_BLOGS:' . implode(',', array_map('strval', (array) $GLOBALS['wpdb']->get_col("SELECT blog_id FROM {\$GLOBALS['wpdb']->blogs} ORDER BY blog_id"))));
         pg_log('NOTICE:using canonical preinstalled multisite schema');
         pg_stage_ok('install');
     } catch (Throwable $e) {
