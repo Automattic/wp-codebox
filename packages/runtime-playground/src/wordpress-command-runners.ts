@@ -54,7 +54,7 @@ import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs, splitLeadin
 import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, completedPlaygroundCommandError, playgroundCommandDiagnosticText, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic, readPluginPhpunitDiscoveryResult } from "./runtime-diagnostics.js"
-import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } from "./phpunit-command-semantics.js"
+import { phpunitExecutionSemantics, requiresManagedMultisitePreinstall } from "./phpunit-command-semantics.js"
 import { parsePhpunitOutput } from "./phpunit-test-results.js"
 import { runRuntimeExternalHttpLoad, waitForRuntimePreviewReady, type RuntimeExternalHttpLoadResult } from "./external-http-load.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
@@ -963,7 +963,7 @@ export async function runPhpunitCommand({
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
   const processIdentity = boundedProcessIdentity(spec.processIdentity)
-  const managedMultisitePreinstalled = !explicitCode && !discoveryOnly && requiresManagedMysqlMultisitePreinstall(args, runtimeSpec)
+  const managedMultisitePreinstalled = !explicitCode && !discoveryOnly && requiresManagedMultisitePreinstall(args, runtimeSpec)
   const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
   const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit", false) : phpunitRunCode({

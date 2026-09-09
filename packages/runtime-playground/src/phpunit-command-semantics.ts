@@ -22,7 +22,10 @@ export function phpunitExecutionSemantics(args: string[], runtimeSpec: Pick<Runt
   return { bootstrapMode, databaseType, externalDatabase, multisite: booleanArg(args, "multisite") }
 }
 
-export function requiresManagedMysqlMultisitePreinstall(args: string[], runtimeSpec: Pick<RuntimeCreateSpec, "environment" | "runtimeEnv">): boolean {
+export function requiresManagedMultisitePreinstall(args: string[], runtimeSpec: Pick<RuntimeCreateSpec, "environment" | "runtimeEnv">): boolean {
   const semantics = phpunitExecutionSemantics(args, runtimeSpec)
-  return semantics.bootstrapMode === "managed" && semantics.databaseType === "mysql" && semantics.externalDatabase && semantics.multisite
+  return semantics.bootstrapMode === "managed" && semantics.multisite && (
+    (semantics.databaseType === "mysql" && semantics.externalDatabase)
+    || semantics.databaseType === "mdi-native"
+  )
 }

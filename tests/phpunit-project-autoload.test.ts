@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.js"
 import { corePhpunitRunCode, phpunitMultisitePreinstallCode, phpunitRunCode } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
 import { runPhpunitCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
-import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } from "../packages/runtime-playground/src/phpunit-command-semantics.js"
+import { phpunitExecutionSemantics, requiresManagedMultisitePreinstall } from "../packages/runtime-playground/src/phpunit-command-semantics.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 import { recipeExtraPluginSourceSubpath } from "../packages/cli/src/recipe-sources.js"
 import { recipeInputMountPathMap, rewriteInputMountPathArgs } from "../packages/cli/src/commands/recipe-runtime-setup.js"
@@ -724,8 +724,10 @@ const inferredSemantics = phpunitExecutionSemantics(["multisite=true"], {
   runtimeEnv: { DB_HOST: "127.0.0.1" },
 })
 assert.deepEqual(inferredSemantics, { bootstrapMode: "managed", databaseType: "mysql", externalDatabase: true, multisite: true }, "omitted defaults, external DB inference, and boolean true strings use runner semantics")
-assert.equal(requiresManagedMysqlMultisitePreinstall(["multisite=yes"], { environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" }, runtimeEnv: { DB_HOST: "db" } }), true)
-assert.equal(requiresManagedMysqlMultisitePreinstall(["multisite=false"], { environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" }, runtimeEnv: { DB_HOST: "db" } }), false)
+assert.equal(requiresManagedMultisitePreinstall(["multisite=yes"], { environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" }, runtimeEnv: { DB_HOST: "db" } }), true)
+assert.equal(requiresManagedMultisitePreinstall(["database-type=mdi-native", "multisite=yes"], { environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "custom-drop-in" } }), true)
+assert.equal(requiresManagedMultisitePreinstall(["multisite=false"], { environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" }, runtimeEnv: { DB_HOST: "db" } }), false)
+assert.equal(requiresManagedMultisitePreinstall(["database-type=mdi-native", "multisite=yes", "bootstrap-mode=project"], { environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "custom-drop-in" } }), false)
 
 const preinstallCode = phpunitMultisitePreinstallCode({
   testsDir: "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
@@ -744,6 +746,8 @@ assert.ok(preinstallCode.includes("/tmp/wp-codebox-preinstall-mu-plugins"), "mul
 assert.ok(preinstallCode.includes("@file_put_contents($result_file, '');"), "multisite preinstall clears stale diagnostics")
 assert.ok(preinstallCode.includes("STAGE_FAIL:preinstall:"), "multisite preinstall records throwable diagnostics")
 assert.ok(preinstallCode.includes("STAGE_FATAL:preinstall:"), "multisite preinstall records fatal diagnostics")
+assert.ok(preinstallCode.includes("pg_preinstall_log('before-installer-include')"), "multisite preinstall records its installer boundary")
+assert.ok(preinstallCode.includes("installer-blogs:"), "multisite preinstall records its canonical blog rows")
 
 const mysqlMultisiteInvocations: string[] = []
 await runPhpunitCommand({
@@ -768,6 +772,25 @@ assert.equal(mysqlMultisiteInvocations[0].includes("preinstall-sensitive/bootstr
 assert.ok(mysqlMultisiteInvocations[1].includes("$phpunit_argv = pg_build_phpunit_argv"), "normal managed PHPUnit behavior follows preinstall")
 assert.ok(mysqlMultisiteInvocations[1].includes("$managed_multisite_preinstalled = true"), "main managed invocation receives the canonical preinstall result")
 assert.ok(mysqlMultisiteInvocations[1].includes("pg_run_preinstalled_wordpress_stage"), "main managed invocation boots the canonical schema without reinstalling it")
+assert.ok(mysqlMultisiteInvocations[1].includes("define('WP_INSTALLING', true)"), "canonical preinstalled boot retains wp-phpunit's installation context")
+assert.ok(mysqlMultisiteInvocations[1].includes("PREINSTALLED_BLOGS:"), "canonical preinstalled boot records its visible blog rows")
+
+const nativeMultisiteInvocations: string[] = []
+await runPhpunitCommand({
+  artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-native-multisite-")),
+  mounts: [],
+  runPlaygroundCommand: async (_command, _server, input) => {
+    nativeMultisiteInvocations.push(decodedBootstrapWrapper(input.code))
+    return { text: "ok", exitCode: 0 }
+  },
+  runtimeSpec: wordpressRuntimeSpec({ commands: ["wordpress.phpunit"], environment: { databaseSetup: "custom-drop-in" } }),
+  server: { playground: {} } as never,
+  spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mdi-native", "multisite=1"] },
+})
+assert.equal(nativeMultisiteInvocations.length, 2, "managed MDI-native multisite runs the wp-phpunit network installer before PHPUnit")
+assert.ok(nativeMultisiteInvocations[0].includes("'run_ms_tests'"))
+assert.ok(nativeMultisiteInvocations[0].includes("'MARKDOWN_DB_BACKEND' => 'mdi-native'"))
+assert.ok(nativeMultisiteInvocations[1].includes("$managed_multisite_preinstalled = true"))
 
 const failedPreinstallInvocations: string[] = []
 await assert.rejects(

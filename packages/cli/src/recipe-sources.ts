@@ -20,7 +20,7 @@ const MAX_COMPOSER_INSTALLER_PATHS = 64
 const MAX_COMPOSER_INSTALLER_PACKAGES = 256
 const MAX_COMPOSER_PACKAGE_TREE_ENTRIES = 100_000
 const BUNDLED_MDI_NATIVE_SOURCE = "wp-codebox:mdi-native"
-const BUNDLED_MDI_NATIVE_ARCHIVE = fileURLToPath(new URL("../../../runtime-overlays/mdi-native/markdown-database-integration-11652def.zip", import.meta.url))
+const BUNDLED_MDI_NATIVE_ARCHIVE = fileURLToPath(new URL("../../../runtime-overlays/mdi-native/markdown-database-integration-0bec3f7.zip", import.meta.url))
 
 export interface PreparedWorkspaceMount {
   source: string
