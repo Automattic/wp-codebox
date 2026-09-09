@@ -470,6 +470,11 @@ $result_file = ${JSON.stringify(options.resultFile ?? PLUGIN_PHPUNIT_RESULT_FILE
 $preinstall_complete = false;
 
 @file_put_contents($result_file, '');
+function pg_preinstall_log(string $marker): void {
+    global $result_file;
+    @file_put_contents($result_file, 'PREINSTALL:' . $marker . "\n", FILE_APPEND);
+}
+pg_preinstall_log('start');
 register_shutdown_function(static function () use (&$preinstall_complete, $result_file): void {
     if ($preinstall_complete) {
         return;
@@ -485,10 +490,13 @@ ${phpWpConfigDefineAppenderFunction("pg_append_wp_config_defines", "error_log('S
 ${managedPhpunitConfigWriterPhp()}
 
 pg_apply_env($bench_env);
+pg_preinstall_log('environment-applied');
 if (!is_dir('/tmp/wp-codebox-preinstall-mu-plugins') && !mkdir('/tmp/wp-codebox-preinstall-mu-plugins', 0700, true) && !is_dir('/tmp/wp-codebox-preinstall-mu-plugins')) {
     throw new RuntimeException('Could not create isolated multisite preinstall mu-plugin directory.');
 }
+pg_preinstall_log('mu-plugin-directory-ready');
 $config_path = pg_write_managed_test_config($wp_config_defines, 'wptests_', $database_type);
+pg_preinstall_log('config-written');
 if (!defined('WP_TESTS_MULTISITE')) {
     define('WP_TESTS_MULTISITE', true);
 }
@@ -496,8 +504,10 @@ $argv = array('install.php', $config_path, 'run_ms_tests', 'no_core_tests');
 $_SERVER['argv'] = $argv;
 $_SERVER['argc'] = count($argv);
 try {
+    pg_preinstall_log('before-installer-include');
     require $tests_dir . '/includes/install.php';
     $preinstall_complete = true;
+    pg_preinstall_log('installer-complete');
 } catch (Throwable $error) {
     @file_put_contents($result_file, 'STAGE_FAIL:preinstall:' . get_class($error) . ': ' . $error->getMessage() . ' at ' . $error->getFile() . ':' . $error->getLine() . "\n", FILE_APPEND);
     throw $error;
@@ -1125,7 +1135,14 @@ function pg_run_preinstalled_wordpress_stage(array $cfg): void {
     try {
         $config_path = $cfg['config_path'];
         $tests_dir = $cfg['tests_dir'];
+        if (!defined('WP_INSTALLING')) {
+            define('WP_INSTALLING', true);
+        }
+        if (!defined('DISABLE_WP_CRON')) {
+            define('DISABLE_WP_CRON', true);
+        }
         require_once $config_path;
+        require_once $tests_dir . '/includes/functions.php';
         tests_reset__SERVER();
         $GLOBALS['PHP_SELF'] = '/index.php';
         $_SERVER['PHP_SELF'] = '/index.php';

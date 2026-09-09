@@ -746,6 +746,7 @@ assert.ok(preinstallCode.includes("/tmp/wp-codebox-preinstall-mu-plugins"), "mul
 assert.ok(preinstallCode.includes("@file_put_contents($result_file, '');"), "multisite preinstall clears stale diagnostics")
 assert.ok(preinstallCode.includes("STAGE_FAIL:preinstall:"), "multisite preinstall records throwable diagnostics")
 assert.ok(preinstallCode.includes("STAGE_FATAL:preinstall:"), "multisite preinstall records fatal diagnostics")
+assert.ok(preinstallCode.includes("pg_preinstall_log('before-installer-include')"), "multisite preinstall records its installer boundary")
 
 const mysqlMultisiteInvocations: string[] = []
 await runPhpunitCommand({
@@ -770,6 +771,7 @@ assert.equal(mysqlMultisiteInvocations[0].includes("preinstall-sensitive/bootstr
 assert.ok(mysqlMultisiteInvocations[1].includes("$phpunit_argv = pg_build_phpunit_argv"), "normal managed PHPUnit behavior follows preinstall")
 assert.ok(mysqlMultisiteInvocations[1].includes("$managed_multisite_preinstalled = true"), "main managed invocation receives the canonical preinstall result")
 assert.ok(mysqlMultisiteInvocations[1].includes("pg_run_preinstalled_wordpress_stage"), "main managed invocation boots the canonical schema without reinstalling it")
+assert.ok(mysqlMultisiteInvocations[1].includes("define('WP_INSTALLING', true)"), "canonical preinstalled boot retains wp-phpunit's installation context")
 
 const nativeMultisiteInvocations: string[] = []
 await runPhpunitCommand({
