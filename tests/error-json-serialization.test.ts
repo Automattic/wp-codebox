@@ -88,6 +88,11 @@ process.exitCode = undefined
 const longStdout = longLogs.join("\n")
 assert.ok(Buffer.byteLength(longStdout) <= MAX_ERROR_OUTPUT_BYTES)
 const longOutput = JSON.parse(longStdout) as { error: { message: string, serialization: { omitted: boolean, reason: string } } }
+if (process.env.ERROR_JSON_EVIDENCE_DIR) {
+  const evidenceDirectory = resolve(process.env.ERROR_JSON_EVIDENCE_DIR)
+  await writeFile(resolve(evidenceDirectory, "cli-long-failure.json"), `${longStdout}\n`)
+  await writeFile(resolve(evidenceDirectory, "cli-long-failure-summary.json"), `${JSON.stringify({ byteLength: Buffer.byteLength(longStdout), output: longOutput }, null, 2)}\n`)
+}
 assert.equal(longOutput.error.message, longRoot.message)
 assert.deepEqual(longOutput.error.serialization, { omitted: true, reason: "output-budget" })
 
