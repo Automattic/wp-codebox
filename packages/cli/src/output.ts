@@ -98,11 +98,14 @@ export async function captureStdout<T>(callback: () => Promise<T>): Promise<{ re
 const MAX_ERROR_DEPTH = 8
 const MAX_ERROR_ENTRIES = 50
 const MAX_ERROR_NODES = 500
+// This is the complete UTF-8, pretty-printed failure response limit.
 export const MAX_ERROR_OUTPUT_BYTES = 192 * 1024
+const MAX_ERROR_SERIALIZATION_BYTES = 160 * 1024
+const MAX_DIAGNOSTIC_DETAILS_BYTES = 8 * 1024
 const MAX_ERROR_STRING_BYTES = 8 * 1024
 
 export function serializeError(error: unknown): CliError {
-  const budget = new ErrorSerializationBudget()
+  const budget = new ErrorSerializationBudget(MAX_ERROR_SERIALIZATION_BYTES)
   const serialized = serializeErrorValue(error, 0, new WeakSet(), budget)
   return isCliError(serialized) ? serialized : { name: "Error", message: errorMessage(error) }
 }
@@ -112,9 +115,11 @@ class ErrorSerializationBudget {
   nodes = 0
   exhausted = false
 
+  constructor(private readonly maximumBytes = MAX_ERROR_SERIALIZATION_BYTES) {}
+
   canAdd(value: unknown): boolean {
     const bytes = Buffer.byteLength(JSON.stringify(value))
-    if (this.nodes >= MAX_ERROR_NODES || this.bytes + bytes > MAX_ERROR_OUTPUT_BYTES) {
+    if (this.nodes >= MAX_ERROR_NODES || this.bytes + bytes > this.maximumBytes) {
       this.exhausted = true
       return false
     }
@@ -337,19 +342,23 @@ export function cliFailureEnvelope(command: string | undefined, message: string,
     schema: "wp-codebox/cli-failure/v1",
     success: false,
     status: "error",
-    ...(command ? { command } : {}),
+    ...(command ? { command: boundedText(command) } : {}),
     error: isCliError(error) ? error : {
       name: "Error",
-      message,
+      message: boundedText(message),
     },
     diagnostics: [
       {
         code: "cli-error",
-        message,
-        ...diagnosticDetails,
+        message: boundedText(message),
+        ...serializeDiagnosticDetails(diagnosticDetails),
       },
     ],
   }
+}
+
+function serializeDiagnosticDetails(details: Record<string, unknown>): Record<string, unknown> {
+  return serializeEntries(details, 0, new WeakSet(), new ErrorSerializationBudget(MAX_DIAGNOSTIC_DETAILS_BYTES))
 }
 
 export function wantsJsonOutput(args: readonly string[]): boolean {

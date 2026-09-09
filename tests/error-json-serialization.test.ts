@@ -73,4 +73,22 @@ assert.equal(output.error.broadPayload.serialization.reason, "output-budget")
 assert.equal(output.error.throwingGetter.reason, "accessor-property")
 assert.equal(output.error["[redacted]"], "[redacted]")
 
+const longRoot = Object.assign(new Error("x".repeat(8192)), Object.fromEntries(Array.from({ length: 50 }, (_, index) => [`field${index}`, "y".repeat(8192)])))
+let longExitCode: number | undefined
+const { logs: longLogs } = await captureStdout(async () => await new Promise<void>((resolve) => {
+  runCliEntrypoint(["recipe-run", "--json"], async () => { throw longRoot }, ((code) => {
+    longExitCode = code
+    resolve()
+    return undefined as never
+  }))
+}))
+
+assert.equal(longExitCode, 1)
+process.exitCode = undefined
+const longStdout = longLogs.join("\n")
+assert.ok(Buffer.byteLength(longStdout) <= MAX_ERROR_OUTPUT_BYTES)
+const longOutput = JSON.parse(longStdout) as { error: { message: string, serialization: { omitted: boolean, reason: string } } }
+assert.equal(longOutput.error.message, longRoot.message)
+assert.deepEqual(longOutput.error.serialization, { omitted: true, reason: "output-budget" })
+
 console.log("bounded error JSON serialization ok")
