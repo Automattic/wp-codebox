@@ -188,7 +188,7 @@ function serializeErrorValue(value: unknown, depth: number, seen: WeakSet<object
 }
 
 function serializeEntries(value: object, depth: number, seen: WeakSet<object>, budget: ErrorSerializationBudget, excluded = new Set<string>()): Record<string, unknown> {
-  const output: Record<string, unknown> = Object.create(null) as Record<string, unknown>
+  const output: Record<string, unknown> = {}
   const keys = safeEnumerableKeys(value).filter((key) => !excluded.has(key))
   for (const key of keys.slice(0, MAX_ERROR_ENTRIES)) {
     const descriptor = safeDescriptor(value, key)
@@ -198,7 +198,13 @@ function serializeEntries(value: object, depth: number, seen: WeakSet<object>, b
       output.serialization = truncation("output-budget")
       return output
     }
-    output[outputKey] = isSensitiveKey(key) ? "[redacted]" : "value" in descriptor ? serializeErrorValue(descriptor.value, depth + 1, seen, budget) : truncation("accessor-property")
+    // Define untrusted keys as data properties so __proto__ cannot change the output prototype.
+    Object.defineProperty(output, outputKey, {
+      value: isSensitiveKey(key) ? "[redacted]" : "value" in descriptor ? serializeErrorValue(descriptor.value, depth + 1, seen, budget) : truncation("accessor-property"),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
     if (budget.exhausted) {
       output.serialization = truncation("output-budget")
       return output

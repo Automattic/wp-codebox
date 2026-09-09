@@ -41,6 +41,8 @@ const { logs } = await captureStdout(async () => await new Promise<void>((resolv
 }))
 
 assert.equal(exitCode, 1)
+// The test simulates a failing CLI process but must not make this test process fail.
+process.exitCode = undefined
 const stdout = logs.join("\n")
 assert.ok(Buffer.byteLength(stdout) <= MAX_ERROR_OUTPUT_BYTES)
 assert.doesNotMatch(stdout, new RegExp(secret))
