@@ -2,7 +2,7 @@ import { cp, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, posix, resolve } from "node:path"
 import { booleanCommandArg, phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type MountSpec, type Runtime, type RuntimeCreateSpec, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
-import { requiresManagedMysqlMultisitePreinstall } from "@automattic/wp-codebox-playground"
+import { requiresManagedMultisitePreinstall } from "@automattic/wp-codebox-playground"
 import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareExtraPlugins, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex } from "../recipe-dry-run.js"
@@ -245,7 +245,7 @@ export async function applyRecipeRuntimeSetup(args: {
     return { executions }
   }
 
-  const isolateManagedMultisitePreinstall = recipeHasManagedMysqlMultisitePhpunit(recipe, runtimeSpec)
+  const isolateManagedMultisitePreinstall = recipeHasManagedMultisitePhpunit(recipe, runtimeSpec)
   const deferredPluginFiles = managedPhpunitDeferredPluginFiles(recipe, runtimeSpec)
   const activatedPlugins = extraPlugins.filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false && !deferredPluginFiles.has(plugin.pluginFile))
   executions.push(...await installPreparedExtraPluginRuntime({
@@ -276,7 +276,7 @@ export async function applyRecipeRuntimeSetup(args: {
 function managedPhpunitDeferredPluginFiles(recipe: WorkspaceRecipe, runtimeSpec: Pick<RuntimeCreateSpec, "environment" | "runtimeEnv">): Set<string> {
   const deferred = new Set<string>()
   for (const step of [...(recipe.workflow.before ?? []), ...recipe.workflow.steps, ...(recipe.workflow.after ?? [])]) {
-    if (step.command !== "wordpress.phpunit" || !requiresManagedMysqlMultisitePreinstall(step.args ?? [], runtimeSpec)) continue
+    if (step.command !== "wordpress.phpunit" || !requiresManagedMultisitePreinstall(step.args ?? [], runtimeSpec)) continue
     const raw = (step.args ?? []).find((arg) => arg.startsWith("dependency-plugins-json="))?.slice("dependency-plugins-json=".length)
     if (!raw) continue
     const plugins = JSON.parse(raw) as unknown
@@ -290,9 +290,9 @@ function managedPhpunitDeferredPluginFiles(recipe: WorkspaceRecipe, runtimeSpec:
   return deferred
 }
 
-function recipeHasManagedMysqlMultisitePhpunit(recipe: WorkspaceRecipe, runtimeSpec: Pick<RuntimeCreateSpec, "environment" | "runtimeEnv">): boolean {
+function recipeHasManagedMultisitePhpunit(recipe: WorkspaceRecipe, runtimeSpec: Pick<RuntimeCreateSpec, "environment" | "runtimeEnv">): boolean {
   return [...(recipe.workflow.before ?? []), ...recipe.workflow.steps, ...(recipe.workflow.after ?? [])]
-    .some((step) => step.command === "wordpress.phpunit" && requiresManagedMysqlMultisitePreinstall(step.args ?? [], runtimeSpec))
+    .some((step) => step.command === "wordpress.phpunit" && requiresManagedMultisitePreinstall(step.args ?? [], runtimeSpec))
 }
 
 export function recipeHasPhpunitDiscoveryOnly(recipe: WorkspaceRecipe): boolean {
