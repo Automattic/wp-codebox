@@ -158,7 +158,7 @@ function phpunitDependencyPlugins(mounts: readonly string[], plugins: readonly W
 function mdiNativePlugin(): WorkspaceRecipeExtraPlugin {
   return {
     source: "wp-codebox:mdi-native",
-    sha256: "74af36f66ac7465b900e3d4dff00296f97a94c2859dffcc3502a341e8025d126",
+    sha256: "b01d119e994c5c498373edcd2e3a62fcaec72bc8ad360f6c9a209341e1c5cc88",
     slug: "markdown-database-integration",
     pluginFile: "markdown-database-integration/markdown-database-integration.php",
     activate: false,

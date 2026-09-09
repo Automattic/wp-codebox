@@ -7,6 +7,7 @@ import { join } from "node:path"
 import { runRecipeBuildCommand } from "../packages/cli/src/commands/recipe-build.ts"
 import { executeRuntimeServiceProcess, linuxProcessGroupHasLiveMembers, parseLoopbackPort, provisionRuntimeServices, provisionRuntimeServicesForRecipe, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { planWorkspaceRecipe } from "../packages/cli/src/recipe-dry-run.ts"
+import { cleanupRecipePreparedSources, prepareRecipeExtraPlugins } from "../packages/cli/src/recipe-sources.ts"
 import { executeSmtpSinkRecipeOperation } from "../packages/cli/src/smtp-sink-recipe-operations.ts"
 import { recipePolicy, validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.ts"
@@ -82,7 +83,7 @@ assert.deepEqual(JSON.parse(await readFile("runtime-overlays/mdi-native/provenan
   repository: "Automattic/markdown-database-integration",
   revision: "0bec3f73f5367b692f7b0ab0acfeff55a77500ff",
   archive: "markdown-database-integration-0bec3f7.zip",
-  sha256: "74af36f66ac7465b900e3d4dff00296f97a94c2859dffcc3502a341e8025d126",
+  sha256: "b01d119e994c5c498373edcd2e3a62fcaec72bc8ad360f6c9a209341e1c5cc88",
 })
 const mdiPhpunitRecipe = buildWordPressPhpunitRecipe({ pluginSlug: "example", databaseType: "mdi-native" })
 assert.equal(mdiPhpunitRecipe.runtime?.databaseSetup, "custom-drop-in")
@@ -90,12 +91,18 @@ assert.equal(mdiPhpunitRecipe.inputs?.services, undefined)
 assert.ok(mdiPhpunitRecipe.workflow.steps[0].args?.includes("database-type=mdi-native"))
 assert.deepEqual(mdiPhpunitRecipe.inputs?.extra_plugins?.at(-1), {
   source: "wp-codebox:mdi-native",
-  sha256: "74af36f66ac7465b900e3d4dff00296f97a94c2859dffcc3502a341e8025d126",
+  sha256: "b01d119e994c5c498373edcd2e3a62fcaec72bc8ad360f6c9a209341e1c5cc88",
   slug: "markdown-database-integration",
   pluginFile: "markdown-database-integration/markdown-database-integration.php",
   activate: false,
   metadata: { phase: "pre-install", databaseDropIn: true, revision: "0bec3f73f5367b692f7b0ab0acfeff55a77500ff" },
 })
+const preparedMdiPlugins = await prepareRecipeExtraPlugins(mdiPhpunitRecipe, process.cwd())
+try {
+  await readFile(join(preparedMdiPlugins[0]!.source, "markdown-database-integration.php"), "utf8")
+} finally {
+  await cleanupRecipePreparedSources([], preparedMdiPlugins)
+}
 assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "example", wordpressInstallMode: "do-not-attempt-installing" }).runtime?.wordpressInstallMode, "do-not-attempt-installing")
 const builderDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-builder-"))
 try {
