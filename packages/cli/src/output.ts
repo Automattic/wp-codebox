@@ -198,7 +198,7 @@ function serializeEntries(value: object, depth: number, seen: WeakSet<object>, b
     }
     output[outputKey] = isSensitiveKey(key) ? "[redacted]" : "value" in descriptor ? serializeErrorValue(descriptor.value, depth + 1, seen, budget) : truncation("accessor-property")
   }
-  if (keys.length > MAX_ERROR_ENTRIES) {
+  if (keys.length > MAX_ERROR_ENTRIES && !output.serialization) {
     output.serialization = truncation("max-entries", keys.length - MAX_ERROR_ENTRIES)
   }
   return output
