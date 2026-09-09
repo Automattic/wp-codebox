@@ -666,7 +666,8 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       addIssue("invalid-source", `${path}.source`, error instanceof Error ? error.message : String(error))
       continue
     }
-    const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
+    const bundledMdiNative = sourceRef === "wp-codebox:mdi-native"
+    const sourceRoot = bundledMdiNative ? source.resolvedUrl : recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     let sourceSubpath = ""
     try {
       sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
@@ -674,8 +675,8 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       addIssue("invalid-source-subdir", `${path}.${plugin.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, error instanceof Error ? error.message : String(error))
       continue
     }
-    const localZipSource = source.type === "local" && sourceRef.toLowerCase().endsWith(".zip")
-    const pluginSource = source.type === "local" ? resolve(recipeDirectory, sourceRef) : undefined
+    const localZipSource = source.type === "local" && (bundledMdiNative || sourceRef.toLowerCase().endsWith(".zip"))
+    const pluginSource = source.type === "local" ? (bundledMdiNative ? source.resolvedUrl : resolve(recipeDirectory, sourceRef)) : undefined
     const sourceRootPath = resolve(recipeDirectory, sourceRoot)
     const pluginMountedSource = source.type === "local" ? resolve(sourceRootPath, sourceSubpath) : undefined
     let slug: string

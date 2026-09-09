@@ -77,6 +77,18 @@ assert.throws(
 const sqlitePhpunitRecipe = buildWordPressPhpunitRecipe({ pluginSlug: "example" })
 assert.equal(sqlitePhpunitRecipe.inputs?.services, undefined)
 assert.equal(sqlitePhpunitRecipe.workflow.steps[0].args?.some((arg) => arg.startsWith("database-type=")), false)
+const mdiPhpunitRecipe = buildWordPressPhpunitRecipe({ pluginSlug: "example", databaseType: "mdi-native" })
+assert.equal(mdiPhpunitRecipe.runtime?.databaseSetup, "custom-drop-in")
+assert.equal(mdiPhpunitRecipe.inputs?.services, undefined)
+assert.ok(mdiPhpunitRecipe.workflow.steps[0].args?.includes("database-type=mdi-native"))
+assert.deepEqual(mdiPhpunitRecipe.inputs?.extra_plugins?.at(-1), {
+  source: "wp-codebox:mdi-native",
+  sha256: "ce26c8efffa258afe7c6a838c3dbb869a674a00f030982013fff54a3b4d849b4",
+  slug: "markdown-database-integration",
+  pluginFile: "markdown-database-integration/markdown-database-integration.php",
+  activate: false,
+  metadata: { phase: "pre-install", databaseDropIn: true, revision: "d15708f8c8e80e650a7a7e023dce7e9f712a41bb" },
+})
 assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "example", wordpressInstallMode: "do-not-attempt-installing" }).runtime?.wordpressInstallMode, "do-not-attempt-installing")
 const builderDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-builder-"))
 try {

@@ -954,6 +954,9 @@ export async function runPhpunitCommand({
   if (databaseType === "mysql" && !externalDatabase) {
     throw new Error("wordpress.phpunit requires a managed external database service when database-type=mysql; refusing to substitute SQLite")
   }
+  if (databaseType === "mdi-native" && externalDatabase) {
+    throw new Error("wordpress.phpunit cannot combine database-type=mdi-native with an external database runtime; mdi-native owns the WordPress database boundary")
+  }
   if (declaredDatabaseType === "sqlite" && externalDatabase) {
     throw new Error("wordpress.phpunit declared database-type=sqlite but the runtime uses an external database; refusing backend substitution")
   }

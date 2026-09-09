@@ -83,6 +83,7 @@
     "scripts/apply-development-patches.mjs",
     "patches",
     "runtime-overlays/php-wasm-node-8-3",
+    "runtime-overlays/mdi-native",
     "runtime-overlays/provenance.json",
     "README.md",
     "LICENSE"

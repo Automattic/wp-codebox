@@ -12,7 +12,7 @@ interface WordPressPhpunitBuilderOptions {
   wordpressVersion?: string
   phpVersion?: string
   workers?: RuntimeWorkerCount
-  databaseType?: "sqlite" | "mysql"
+  databaseType?: "sqlite" | "mysql" | "mdi-native"
   wordpressInstallMode?: RuntimeWordPressInstallMode
   extensions?: WorkspaceRecipePHPWasmExtensionManifest[]
   backendPackage?: WorkspaceRecipeRuntimeBackendPackage
