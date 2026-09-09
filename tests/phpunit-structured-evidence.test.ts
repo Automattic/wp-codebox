@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExecutionResult } from "../packages/runtime-core/src/runtime-contracts.js"
-import { PlaygroundCommandCrashError } from "../packages/runtime-playground/src/playground-command-errors.js"
+import { extractPhpunitFailureMessage, PlaygroundCommandCrashError } from "../packages/runtime-playground/src/playground-command-errors.js"
 import { PLUGIN_PHPUNIT_RESULT_FILE } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
 import { buildPhpunitTestResults, parsePhpunitCompletedResult } from "../packages/runtime-playground/src/phpunit-test-results.js"
 import { runPhpunitCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
@@ -14,6 +14,8 @@ const failedLog = completedLog({ status: "failed", total: 4, passed: 1, failed: 
 assert.equal(parsePhpunitCompletedResult(passedLog)?.status, "passed")
 assert.equal(parsePhpunitCompletedResult(failedLog)?.failed, 2)
 assert.equal(parsePhpunitCompletedResult("STAGE_FAIL:run_tests:RuntimeException: crashed"), undefined)
+assert.equal(extractPhpunitFailureMessage("MDI_NATIVE_UNSUPPORTED_QUERY:reason=derived_table_not_supported\n"), "mdi_native_unsupported_query: reason=derived_table_not_supported")
+assert.equal(extractPhpunitFailureMessage("MDI_NATIVE_UNSUPPORTED_QUERY:reason=unsupported WHERE token='secret'\n"), "mdi_native_unsupported_query")
 
 const passedEvidence = buildPhpunitTestResults([execution(0)], [{ path: "files/phpunit/.wp-codebox-result.txt", result: parsePhpunitCompletedResult(passedLog)! }])
 assert.equal(passedEvidence.status, "passed")

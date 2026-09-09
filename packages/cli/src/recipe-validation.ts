@@ -666,7 +666,8 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       addIssue("invalid-source", `${path}.source`, error instanceof Error ? error.message : String(error))
       continue
     }
-    const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
+    const bundledMdiNative = sourceRef === "wp-codebox:mdi-native"
+    const sourceRoot = bundledMdiNative ? source.resolvedUrl : recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     let sourceSubpath = ""
     try {
       sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
@@ -674,8 +675,8 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       addIssue("invalid-source-subdir", `${path}.${plugin.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, error instanceof Error ? error.message : String(error))
       continue
     }
-    const localZipSource = source.type === "local" && sourceRef.toLowerCase().endsWith(".zip")
-    const pluginSource = source.type === "local" ? resolve(recipeDirectory, sourceRef) : undefined
+    const localZipSource = source.type === "local" && (bundledMdiNative || sourceRef.toLowerCase().endsWith(".zip"))
+    const pluginSource = source.type === "local" ? (bundledMdiNative ? source.resolvedUrl : resolve(recipeDirectory, sourceRef)) : undefined
     const sourceRootPath = resolve(recipeDirectory, sourceRoot)
     const pluginMountedSource = source.type === "local" ? resolve(sourceRootPath, sourceSubpath) : undefined
     let slug: string
@@ -1575,6 +1576,22 @@ export function hasExplicitSiteSeedSelectors(scope: NonNullable<WorkspaceRecipeS
 
 async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"][number], path: string, addIssue: (code: string, path: string, message: string) => void, recipeDirectory: string): Promise<void> {
   validateRecipeStepDescriptorArgs(step, path, addIssue)
+  const resultPathNames = new Set<string>()
+  const resultPathSources = new Set<string>()
+  for (const [index, resultPath] of (step.resultPaths ?? []).entries()) {
+    validateAbsoluteSandboxPath(resultPath.path, `${path}.resultPaths[${index}].path`, addIssue)
+    if (resultPathNames.has(resultPath.name)) {
+      addIssue("duplicate-result-path-name", `${path}.resultPaths[${index}].name`, "Each resultPaths name must be unique so artifact paths cannot collide.")
+    }
+    resultPathNames.add(resultPath.name)
+    if (resultPathSources.has(resultPath.path)) {
+      addIssue("duplicate-result-path-source", `${path}.resultPaths[${index}].path`, "Each resultPaths path must be captured at most once.")
+    }
+    resultPathSources.add(resultPath.path)
+    if (step.command !== "wordpress.phpunit") {
+      addIssue("unsupported-result-path-command", `${path}.resultPaths[${index}]`, "resultPaths are currently supported by wordpress.phpunit, which captures its command VFS directly after PHPUnit shutdown.")
+    }
+  }
 
   if (isSmtpSinkRecipeOperation(step.command)) {
     const allowed = step.command === "host/smtp.inspect" ? new Set(["service", "limit", "recipient", "recipient-label", "subject-marker", "link-marker"]) : new Set(["service"])

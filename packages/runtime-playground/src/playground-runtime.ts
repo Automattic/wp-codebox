@@ -1772,7 +1772,7 @@ class PlaygroundRuntime implements Runtime {
     })
   }
 
-  async runPhpunit(spec: ExecutionSpec): Promise<string> {
+  async runPhpunit(spec: ExecutionSpec): Promise<string | RuntimeCommandResultEnvelope> {
     const server = await this.bootPlayground()
     return runPhpunitCommand({
       artifactRoot: this.artifactRoot,

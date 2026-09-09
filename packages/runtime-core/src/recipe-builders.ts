@@ -16,7 +16,7 @@ export interface WordPressPhpunitRecipeOptions {
   wordpressVersion?: string
   phpVersion?: string
   workers?: RuntimeWorkerCount
-  databaseType?: "sqlite" | "mysql"
+  databaseType?: "sqlite" | "mysql" | "mdi-native"
   wordpressInstallMode?: RuntimeWordPressInstallMode
   blueprint?: unknown
   extensions?: WorkspaceRecipePHPWasmExtensionManifest[]
@@ -78,12 +78,15 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
   const pluginTarget = `/wordpress/wp-content/plugins/${pluginSlug}`
   const autoloadFile = options.autoloadFile ?? (options.bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const services = phpunitRuntimeServices(options.databaseType, options.services)
-  const extraPlugins = normalizeExtraPlugins(options.extra_plugins)
+  const extraPlugins = options.databaseType === "mdi-native"
+    ? [...normalizeExtraPlugins(options.extra_plugins), mdiNativePlugin()]
+    : normalizeExtraPlugins(options.extra_plugins)
 
   return {
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: {
       wp: options.wordpressVersion ?? DEFAULT_WORDPRESS_VERSION,
+      ...(options.databaseType === "mdi-native" ? { databaseSetup: "custom-drop-in" as const } : {}),
       ...(options.phpVersion ? { phpVersion: options.phpVersion } : {}),
       ...(options.workers !== undefined ? { workers: options.workers } : {}),
       ...(options.wordpressInstallMode ? { wordpressInstallMode: options.wordpressInstallMode } : {}),
@@ -152,8 +155,19 @@ function phpunitDependencyPlugins(mounts: readonly string[], plugins: readonly W
   })
 }
 
+function mdiNativePlugin(): WorkspaceRecipeExtraPlugin {
+  return {
+    source: "wp-codebox:mdi-native",
+    sha256: "335bb694f7e6b4185f6d514e61c14ec220ab163fa9d959159d6c26411680cf6c",
+    slug: "markdown-database-integration",
+    pluginFile: "markdown-database-integration/markdown-database-integration.php",
+    activate: false,
+    metadata: { phase: "pre-install", databaseDropIn: true, revision: "11652defdfa88576ee91699b3545ecf0d486f055" },
+  }
+}
+
 function phpunitRuntimeServices(databaseType: WordPressPhpunitRecipeOptions["databaseType"], services: WorkspaceRecipeRuntimeService[] = []): WorkspaceRecipeRuntimeService[] {
-  if (databaseType !== undefined && databaseType !== "sqlite" && databaseType !== "mysql") {
+  if (databaseType !== undefined && databaseType !== "sqlite" && databaseType !== "mysql" && databaseType !== "mdi-native") {
     throw new Error(`Unsupported PHPUnit database type: ${databaseType}`)
   }
   if (databaseType !== "mysql") {

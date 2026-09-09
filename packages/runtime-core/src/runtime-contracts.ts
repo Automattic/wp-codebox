@@ -295,12 +295,22 @@ export interface WorkspaceRecipeStep {
   command: string
   args?: string[]
   timeoutMs?: number
+  resultPaths?: WorkspaceRecipeResultPath[]
   continuation?: WorkspaceRecipeStepContinuation
   pluginInput?: WorkspaceRecipeStepPluginInput
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   metadata?: Record<string, unknown>
   allowFailure?: boolean
   advisory?: boolean
+}
+
+/** A bounded JSON result captured by the command handler before another runtime request can reset its VFS. */
+export interface WorkspaceRecipeResultPath {
+  name: string
+  type: string
+  path: string
+  required?: boolean
+  maxBytes?: number
 }
 
 export interface WorkspaceRecipeStepPluginInput {
@@ -846,6 +856,7 @@ export interface ExecutionSpec {
   processIdentity?: string
   artifactNamespace?: string
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
+  resultPaths?: WorkspaceRecipeResultPath[]
   cwd?: string
   timeoutMs?: number
   signal?: AbortSignal

@@ -126,6 +126,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
     return {
       ...spec,
       ...(step.timeoutMs !== undefined && spec.timeoutMs === undefined ? { timeoutMs: step.timeoutMs } : {}),
+      ...(resolvedStep.resultPaths ? { resultPaths: resolvedStep.resultPaths } : {}),
       args: resolvedArgs,
       originalCommand: step.command,
       originalArgs: [...originalArgs],

@@ -453,6 +453,7 @@ function preparedExtraPluginMounts(plugins: PreparedExtraPlugin[]): MountSpec[] 
     source: plugin.source,
     target: plugin.target,
     mode: "readonly",
+    ...(plugin.metadata?.phase === "pre-install" ? { phase: "pre-install" as const } : {}),
     metadata: {
       kind: "extra-plugin",
       slug: plugin.slug,
@@ -465,6 +466,16 @@ async function mountPreparedExtraPlugins(runtime: Runtime, plugins: PreparedExtr
   await phaseExecutor.tracker.run(phaseName, phasePluginMountData(plugins), async () => {
     for (const [index, plugin] of plugins.entries()) {
       await phaseExecutor.operation(`extra-plugin.mount:${plugin.slug}`, runtime.mount(mounts[index]))
+      if (plugin.metadata?.databaseDropIn === true) {
+        await phaseExecutor.operation(`extra-plugin.drop-in:${plugin.slug}`, runtime.mount({
+          type: "file",
+          source: join(plugin.source, "db.php"),
+          target: "/wordpress/wp-content/db.php",
+          mode: "readonly",
+          phase: "pre-install",
+          metadata: { kind: "extra-plugin-database-drop-in", slug: plugin.slug, source: plugin.provenance },
+        }))
+      }
       interruption?.throwIfInterrupted()
     }
   })

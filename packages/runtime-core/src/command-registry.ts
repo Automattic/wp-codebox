@@ -986,7 +986,7 @@ export const commandRegistry = [
       { name: "bootstrap-mode", description: "Bootstrap strategy: managed keeps WP Codebox-owned setup; project requires the plugin's native PHPUnit bootstrap.", format: "managed|project" },
       { name: "project-bootstrap", description: "Plugin-relative PHPUnit bootstrap path used when bootstrap-mode=project. If omitted, the phpunit.xml bootstrap attribute is used.", format: "relative path" },
       { name: "multisite", description: "Run as multisite.", format: "boolean" },
-      { name: "database-type", description: "Required WordPress database backend. MySQL requires a managed external database service; omitted defaults to SQLite.", format: "sqlite|mysql" },
+      { name: "database-type", description: "Required WordPress database backend. MySQL requires a managed external database service; mdi-native uses a pinned Markdown Database Integration drop-in with no database service; omitted defaults to SQLite.", format: "sqlite|mysql|mdi-native" },
     ],
     outputShape: "Raw PHPUnit runner JSON/log output plus normalized test-results artifact, or wp-codebox/phpunit-discovery/v1 JSON when discovery-only=true.",
     policyRequirement: "Runtime policy commands must include wordpress.phpunit.",

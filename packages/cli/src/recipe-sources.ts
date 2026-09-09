@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { copyFile, cp, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { compileSourcePackage, composerManagedHostCommandConfig, composerManagedHostEnv, normalizeReviewerSafePath, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace, WorkspaceRecipeWorkspacePreload, WorkspaceRecipeWorkspacePreloadRepository } from "@automattic/wp-codebox-core"
 import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
@@ -18,6 +19,8 @@ const PHP_SCOPER_DOWNLOAD_TIMEOUT_MS = 120_000
 const MAX_COMPOSER_INSTALLER_PATHS = 64
 const MAX_COMPOSER_INSTALLER_PACKAGES = 256
 const MAX_COMPOSER_PACKAGE_TREE_ENTRIES = 100_000
+const BUNDLED_MDI_NATIVE_SOURCE = "wp-codebox:mdi-native"
+const BUNDLED_MDI_NATIVE_ARCHIVE = fileURLToPath(new URL("../../../runtime-overlays/mdi-native/markdown-database-integration-11652def.zip", import.meta.url))
 
 export interface PreparedWorkspaceMount {
   source: string
@@ -285,7 +288,7 @@ export async function prepareExtraPlugins(plugins: readonly WorkspaceRecipeExtra
     for (const plugin of plugins) {
       const slug = recipeExtraPluginSlug(plugin)
       const sourceRef = recipeExtraPluginSource(plugin)
-      const sourceRootRef = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
+      const sourceRootRef = sourceRef === BUNDLED_MDI_NATIVE_SOURCE ? BUNDLED_MDI_NATIVE_ARCHIVE : recipeExtraPluginSourceRoot(plugin, recipeDirectory)
       const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
       const resolved = await prepareRecipeSource(sourceRootRef, recipeDirectory, slug, plugin.sha256, options)
       const pluginResolved = sourceSubpath ? { ...resolved, source: join(resolved.source, sourceSubpath) } : resolved
@@ -1795,6 +1798,9 @@ export function recipeExtraPlugins(recipe: WorkspaceRecipe): WorkspaceRecipeExtr
 }
 
 export function recipeSource(sourceRef: string, expectedSha256?: string): ParsedRecipeSource {
+  if (sourceRef === BUNDLED_MDI_NATIVE_SOURCE) {
+    return { type: "local", resolvedUrl: BUNDLED_MDI_NATIVE_ARCHIVE, host: "", ...(expectedSha256 ? { expectedSha256: expectedSha256.toLowerCase() } : {}) }
+  }
   let url: URL
   try {
     url = new URL(sourceRef)

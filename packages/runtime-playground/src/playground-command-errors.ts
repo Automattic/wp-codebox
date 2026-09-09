@@ -146,6 +146,7 @@ export function extractPhpunitFailureMessage(log: string): string | undefined {
   const stageFail = lines.find((line) => line.startsWith("STAGE_FAIL:"))
   const stageDie = lines.find((line) => line.startsWith("STAGE_DIE:"))
   const stageFatal = lines.find((line) => line.startsWith("STAGE_FATAL:"))
+  const mdiNativeUnsupportedQuery = lines.find((line) => line.startsWith("MDI_NATIVE_UNSUPPORTED_QUERY:"))
 
   const detail = (marker: string | undefined): string | undefined => {
     if (!marker) {
@@ -157,7 +158,13 @@ export function extractPhpunitFailureMessage(log: string): string | undefined {
     return withoutStage.trim() || withoutMarker.trim()
   }
 
-  const messages = [detail(stageFail), detail(stageDie), detail(stageFatal)].filter(
+  const mdiNativeDiagnostic = /^MDI_NATIVE_UNSUPPORTED_QUERY:reason=([a-z0-9_]{1,80})$/.exec(mdiNativeUnsupportedQuery ?? "")
+  const mdiNativeMessage = mdiNativeDiagnostic
+    ? `mdi_native_unsupported_query: reason=${mdiNativeDiagnostic[1]}`
+    : mdiNativeUnsupportedQuery
+      ? "mdi_native_unsupported_query"
+      : undefined
+  const messages = [detail(stageFail), detail(stageDie), detail(stageFatal), mdiNativeMessage].filter(
     (value): value is string => Boolean(value),
   )
 

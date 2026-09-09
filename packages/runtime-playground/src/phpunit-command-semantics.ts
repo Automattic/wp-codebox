@@ -3,7 +3,7 @@ import { argValue, booleanArg } from "./command-args.js"
 
 export interface PhpunitExecutionSemantics {
   bootstrapMode: string
-  databaseType: "sqlite" | "mysql"
+  databaseType: "sqlite" | "mysql" | "mdi-native"
   externalDatabase: boolean
   multisite: boolean
 }
@@ -11,11 +11,11 @@ export interface PhpunitExecutionSemantics {
 export function phpunitExecutionSemantics(args: string[], runtimeSpec: Pick<RuntimeCreateSpec, "environment" | "runtimeEnv">): PhpunitExecutionSemantics {
   const bootstrapMode = argValue(args, "bootstrap-mode")?.trim() || "managed"
   const declaredDatabaseType = argValue(args, "database-type")?.trim()
-  if (declaredDatabaseType && declaredDatabaseType !== "sqlite" && declaredDatabaseType !== "mysql") {
-    throw new Error(`wordpress.phpunit does not support database-type=${declaredDatabaseType}; supported backends are sqlite and mysql`)
+  if (declaredDatabaseType && declaredDatabaseType !== "sqlite" && declaredDatabaseType !== "mysql" && declaredDatabaseType !== "mdi-native") {
+    throw new Error(`wordpress.phpunit does not support database-type=${declaredDatabaseType}; supported backends are sqlite, mysql, and mdi-native`)
   }
   const externalDatabase = runtimeSpec.environment?.databaseSetup === "external"
-  const databaseType: "sqlite" | "mysql" = declaredDatabaseType === "mysql" || declaredDatabaseType === "sqlite"
+  const databaseType: "sqlite" | "mysql" | "mdi-native" = declaredDatabaseType === "mysql" || declaredDatabaseType === "sqlite" || declaredDatabaseType === "mdi-native"
     ? declaredDatabaseType
     : externalDatabase && runtimeSpec.runtimeEnv?.DB_HOST ? "mysql" : "sqlite"
 

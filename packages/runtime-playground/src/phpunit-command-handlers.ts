@@ -23,7 +23,7 @@ export interface PhpunitRunCodeOptions {
   bootstrapMode: string
   projectBootstrap: string
   multisite: boolean
-  databaseType: "sqlite" | "mysql"
+  databaseType: "sqlite" | "mysql" | "mdi-native"
   managedMultisitePreinstalled?: boolean
   /**
    * Sandbox-internal, writable path for the structured diagnostics log. Defaults
@@ -412,6 +412,22 @@ function managedPhpunitConfigWriterPhp(): string {
         ) as $name => $value) {
             $config .= 'define(' . var_export($name, true) . ', ' . var_export($value, true) . ");\n";
         }
+    } elseif ($database_type === 'mdi-native') {
+        $config .= <<<'CONFIG'
+foreach (array('/tmp/wp-codebox-mdi/content', '/tmp/wp-codebox-mdi/state') as $directory) { if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) { throw new RuntimeException('Could not create isolated MDI canonical state directory.'); } }
+CONFIG;
+        foreach (array(
+            'MARKDOWN_DB_BACKEND' => 'mdi-native',
+            'MARKDOWN_DB_MODE' => 'primary',
+            'MARKDOWN_DB_CONTENT_DIR' => '/tmp/wp-codebox-mdi/content',
+            'MARKDOWN_DB_STATE_DIR' => '/tmp/wp-codebox-mdi/state',
+            'DB_NAME' => 'wptests',
+            'DB_USER' => 'root',
+            'DB_PASSWORD' => '',
+            'DB_HOST' => 'localhost',
+        ) as $name => $value) {
+            $config .= 'define(' . var_export($name, true) . ', ' . var_export($value, true) . ");\n";
+        }
     } else {
         $config .= <<<'CONFIG'
 define('DB_NAME', ':memory:');
@@ -611,6 +627,23 @@ function pg_stage_fail($stage, Throwable $e) {
     foreach (explode("\n", $e->getTraceAsString()) as $line) {
         pg_log('  ' . $line);
     }
+}
+
+function pg_log_mdi_native_diagnostic(): void {
+    global $database_type, $wpdb;
+    if ($database_type !== 'mdi-native' || !is_object($wpdb) || !isset($wpdb->last_runtime_diagnostic) || !is_array($wpdb->last_runtime_diagnostic)) {
+        return;
+    }
+    $diagnostic = $wpdb->last_runtime_diagnostic;
+    if (($diagnostic['code'] ?? '') !== 'markdown_db_native_unsupported_query') {
+        return;
+    }
+    $reason = (string) ($diagnostic['reason'] ?? 'unknown');
+    // Reasons are engine-owned identifiers; never surface query text in artifacts.
+    if (1 !== preg_match('/^[a-z0-9_]{1,80}$/D', $reason)) {
+        $reason = 'unknown';
+    }
+    pg_log('MDI_NATIVE_UNSUPPORTED_QUERY:reason=' . $reason);
 }
 
 function pg_install_diagnostics_handlers() {
@@ -1587,12 +1620,14 @@ try {
     }
     $runner = new PHPUnit\\TextUI\\TestRunner();
     $result = $runner->run($suite, $phpunit_args);
+    if (function_exists('pg_log_mdi_native_diagnostic')) pg_log_mdi_native_diagnostic();
     pg_log($result->wasSuccessful() ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED');
     $assertions = class_exists('PHPUnit\\Framework\\Assert') && method_exists('PHPUnit\\Framework\\Assert', 'getCount') ? PHPUnit\\Framework\\Assert::getCount() : 0;
     pg_log('TESTS: ' . $result->count() . ' ASSERTIONS: ' . $assertions . ' FAILURES: ' . count($result->failures()) . ' ERRORS: ' . count($result->errors()));
     pg_stage_ok('run_tests');
     exit($result->wasSuccessful() ? 0 : 1);
 } catch (Throwable $e) {
+    if (function_exists('pg_log_mdi_native_diagnostic')) pg_log_mdi_native_diagnostic();
     pg_stage_fail('run_tests', $e);
     exit(1);
 }`
