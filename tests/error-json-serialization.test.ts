@@ -1,4 +1,6 @@
 import assert from "node:assert/strict"
+import { mkdir, writeFile } from "node:fs/promises"
+import { resolve } from "node:path"
 import { runCliEntrypoint } from "../packages/cli/src/cli-main.js"
 import { captureStdout, MAX_ERROR_OUTPUT_BYTES } from "../packages/cli/src/output.js"
 
@@ -45,6 +47,12 @@ assert.doesNotMatch(stdout, new RegExp(secret))
 
 const output = JSON.parse(stdout) as {
   error: { message: string, code: string, failureClassification: string, response: { bytes: { type: string, byteLength: number, omitted: boolean }, uint8: { type: string }, arrayBuffer: { type: string }, text: string, artifactRefs: Array<{ path: string }> }, cause: { cause: { reason: string } }, broadPayload: { serialization: { reason: string } }, hugeInteger: { value: string, truncated: boolean, originalByteLength: number }, hostileUint8: { type: string, byteLength: number }, throwingGetter: { reason: string }, "[redacted]": string }
+}
+if (process.env.ERROR_JSON_EVIDENCE_DIR) {
+  const evidenceDirectory = resolve(process.env.ERROR_JSON_EVIDENCE_DIR)
+  await mkdir(evidenceDirectory, { recursive: true })
+  await writeFile(resolve(evidenceDirectory, "cli-failure.json"), `${stdout}\n`)
+  await writeFile(resolve(evidenceDirectory, "cli-failure-summary.json"), `${JSON.stringify({ byteLength: Buffer.byteLength(stdout), output }, null, 2)}\n`)
 }
 assert.equal(output.error.message, "PHPUnit failed after retaining files/test-results.json")
 assert.equal(output.error.code, "wp-codebox-playground-command-failed")
