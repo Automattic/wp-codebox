@@ -107,7 +107,25 @@ function wp_codebox_bench_metrics(array $timings, array $metric_samples): array 
     return $metrics;
 }
 
-function wp_codebox_bench_record_payload($payload, array &$metric_samples, ?array &$metadata, ?array &$artifacts = null, ?array &$steps = null, ?array &$diagnostics = null): void {
+function wp_codebox_bench_skip_reason($payload): ?string {
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    $skipped = ($payload['status'] ?? null) === 'skipped' || array_key_exists('skipped', $payload);
+    if (!$skipped) {
+        return null;
+    }
+
+    foreach (array('skip_reason', 'reason', 'skipped') as $field) {
+        if (isset($payload[$field]) && is_string($payload[$field]) && trim($payload[$field]) !== '') {
+            return trim($payload[$field]);
+        }
+    }
+    return 'unspecified';
+}
+
+function wp_codebox_bench_record_payload($payload, array &$metric_samples, ?array &$metadata, ?array &$artifacts = null, ?array &$steps = null, ?array &$diagnostics = null, bool $record_metrics = true): void {
     if (!is_array($payload)) {
         return;
     }
@@ -137,6 +155,9 @@ function wp_codebox_bench_record_payload($payload, array &$metric_samples, ?arra
     }
 
     foreach ($metrics as $name => $value) {
+        if (!$record_metrics) {
+            continue;
+        }
         if (!is_string($name) || $name === '' || !is_numeric($value)) {
             continue;
         }
@@ -1728,6 +1749,12 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
             if (isset($result['diagnostics']) && is_array($result['diagnostics'])) {
                 $payload['diagnostics'] = array_merge($payload['diagnostics'], $result['diagnostics']);
             }
+            $skip_reason = wp_codebox_bench_skip_reason($result);
+            if ($skip_reason !== null) {
+                $payload['status'] = 'skipped';
+                $payload['skip_reason'] = $skip_reason;
+                return $payload;
+            }
         }
     }
     wp_codebox_bench_assert_required_observations($workload, $payload);
@@ -1827,6 +1854,8 @@ foreach ($workload_files as $workload_file) {
     $artifacts = null;
     $steps = null;
     $diagnostics = null;
+    $status = 'passed';
+    $skip_reason = null;
 
     if (function_exists('memory_reset_peak_usage')) {
         memory_reset_peak_usage();
@@ -1844,6 +1873,14 @@ foreach ($workload_files as $workload_file) {
         $payload = $callable();
         $elapsed_ms = (hrtime(true) - $started) / 1000000;
 
+        $iteration_skip_reason = wp_codebox_bench_skip_reason($payload);
+        if ($iteration_skip_reason !== null) {
+            $status = 'skipped';
+            $skip_reason = $iteration_skip_reason;
+            wp_codebox_bench_record_payload($payload, $metric_samples, $metadata, $artifacts, $steps, $diagnostics, false);
+            break;
+        }
+
         if (!$is_warmup) {
             $timings[] = $elapsed_ms;
             wp_codebox_bench_record_payload($payload, $metric_samples, $metadata, $artifacts, $steps, $diagnostics);
@@ -1855,8 +1892,9 @@ foreach ($workload_files as $workload_file) {
         'id' => $scenario_id,
         'source' => 'in_tree',
         'file' => $relative_file,
-        'iterations' => $iterations,
-        'metrics' => wp_codebox_bench_metrics($timings, $metric_samples),
+        'iterations' => count($timings),
+        'status' => $status,
+        'metrics' => $status === 'skipped' ? new stdClass() : wp_codebox_bench_metrics($timings, $metric_samples),
         'memory' => array('peak_bytes' => memory_get_peak_usage(true)),
         'diagnostics' => array(),
         'provenance' => array('workload_file' => $relative_file),
@@ -1873,6 +1911,9 @@ foreach ($workload_files as $workload_file) {
     }
     if (is_array($diagnostics) && !empty($diagnostics)) {
         $scenario['diagnostics'] = $diagnostics;
+    }
+    if ($skip_reason !== null) {
+        $scenario['skip_reason'] = $skip_reason;
     }
 
     wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, 'teardown', $plugin_path, $lifecycle_diagnostics);
@@ -1895,6 +1936,8 @@ foreach ($configured_workloads as $index => $workload) {
     $artifacts = null;
     $steps = null;
     $diagnostics = null;
+    $status = 'passed';
+    $skip_reason = null;
 
     wp_codebox_bench_reset($bench_reset_policy, 'betweenScenarios', $reset_events);
     wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, 'prepare', $plugin_path, $lifecycle_diagnostics);
@@ -1906,6 +1949,13 @@ foreach ($configured_workloads as $index => $workload) {
         $started = hrtime(true);
         $payload = wp_codebox_bench_run_configured_workload($workload, $plugin_path);
         $elapsed_ms = (hrtime(true) - $started) / 1000000;
+        $iteration_skip_reason = wp_codebox_bench_skip_reason($payload);
+        if ($iteration_skip_reason !== null) {
+            $status = 'skipped';
+            $skip_reason = $iteration_skip_reason;
+            wp_codebox_bench_record_payload($payload, $metric_samples, $metadata, $artifacts, $steps, $diagnostics, false);
+            break;
+        }
         if (!$is_warmup) {
             $timings[] = $elapsed_ms;
             wp_codebox_bench_record_payload($payload, $metric_samples, $metadata, $artifacts, $steps, $diagnostics);
@@ -1914,8 +1964,9 @@ foreach ($configured_workloads as $index => $workload) {
     $scenario = array(
         'id' => $scenario_id,
         'source' => wp_codebox_bench_configured_scenario_source($workload),
-        'iterations' => $iterations,
-        'metrics' => wp_codebox_bench_metrics($timings, $metric_samples),
+        'iterations' => count($timings),
+        'status' => $status,
+        'metrics' => $status === 'skipped' ? new stdClass() : wp_codebox_bench_metrics($timings, $metric_samples),
         'memory' => array('peak_bytes' => memory_get_peak_usage(true)),
         'diagnostics' => array(),
         'provenance' => array('workload_index' => $index),
@@ -1932,6 +1983,9 @@ foreach ($configured_workloads as $index => $workload) {
     if (is_array($diagnostics) && !empty($diagnostics)) {
         $scenario['diagnostics'] = $diagnostics;
     }
+    if ($skip_reason !== null) {
+        $scenario['skip_reason'] = $skip_reason;
+    }
     wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, 'teardown', $plugin_path, $lifecycle_diagnostics);
     $scenarios[] = $scenario;
 }
@@ -1942,6 +1996,12 @@ if (!empty($selected_scenario_ids) && empty($scenarios)) {
         'selected_scenario_ids' => array_keys($selected_scenario_ids),
     ), JSON_UNESCAPED_SLASHES));
 }
+
+$required_scenario_count = count($scenarios);
+$skipped_scenario_count = count(array_filter($scenarios, static function (array $scenario): bool {
+    return ($scenario['status'] ?? 'passed') === 'skipped';
+}));
+$passed_scenario_count = $required_scenario_count - $skipped_scenario_count;
 
 echo wp_json_encode(array(
     'schema' => 'wp-codebox/bench-results/v1',
@@ -1959,12 +2019,25 @@ echo wp_json_encode(array(
         'betweenScenarios' => wp_codebox_bench_normalize_reset_mode($bench_reset_policy['betweenScenarios'] ?? 'none'),
         'events' => $reset_events,
     ),
+    'completeness' => array(
+        'status' => $skipped_scenario_count > 0 ? 'incomplete' : 'complete',
+        'required' => array(
+            'total' => $required_scenario_count,
+            'passed' => $passed_scenario_count,
+            'skipped' => $skipped_scenario_count,
+        ),
+    ),
     'scenarios' => $scenarios,
     'diagnostics' => empty($scenarios) ? array(array(
         'severity' => 'warning',
         'code' => 'no-benchmark-scenarios',
         'message' => 'wordpress.bench completed without runnable scenarios.',
-    )) : array(),
+    )) : ($skipped_scenario_count > 0 ? array(array(
+        'severity' => 'warning',
+        'code' => 'required-scenarios-skipped',
+        'message' => 'wordpress.bench completed with skipped required scenarios.',
+        'details' => array('skipped' => $skipped_scenario_count, 'total' => $required_scenario_count),
+    )) : array()),
     'provenance' => array(
         'command' => 'wordpress.bench',
         'generated_at' => gmdate('c'),
