@@ -337,7 +337,7 @@ function binaryByteLength(value: ArrayBuffer | ArrayBufferView): number {
 }
 
 export function cliFailureEnvelope(command: string | undefined, message: string, details: Record<string, unknown> = {}): Record<string, unknown> {
-  const { error, ...diagnosticDetails } = details
+  const { error, code, ...diagnosticDetails } = details
   return {
     schema: "wp-codebox/cli-failure/v1",
     success: false,
@@ -349,7 +349,7 @@ export function cliFailureEnvelope(command: string | undefined, message: string,
     },
     diagnostics: [
       {
-        code: "cli-error",
+        code: typeof code === "string" ? boundedText(code) : "cli-error",
         message: boundedText(message),
         ...serializeDiagnosticDetails(diagnosticDetails),
       },
