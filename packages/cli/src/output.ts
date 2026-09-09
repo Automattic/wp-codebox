@@ -310,13 +310,16 @@ function binaryType(value: ArrayBuffer | ArrayBufferView): string {
 function binaryByteLength(value: ArrayBuffer | ArrayBufferView): number {
   try {
     if (value instanceof ArrayBuffer) {
-      return ArrayBuffer.prototype.byteLength.call(value)
+      const byteLengthGetter = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")?.get
+      return typeof byteLengthGetter === "function" ? byteLengthGetter.call(value) : 0
     }
     if (value instanceof DataView) {
-      return DataView.prototype.byteLength.call(value)
+      const byteLengthGetter = Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength")?.get
+      return typeof byteLengthGetter === "function" ? byteLengthGetter.call(value) : 0
     }
     const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as { byteLength: number }
-    return Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")?.get?.call(value) ?? 0
+    const byteLengthGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")?.get
+    return typeof byteLengthGetter === "function" ? byteLengthGetter.call(value) : 0
   } catch {
     return 0
   }
