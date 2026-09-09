@@ -110,10 +110,12 @@ export function serializeError(error: unknown): CliError {
 class ErrorSerializationBudget {
   bytes = 0
   nodes = 0
+  exhausted = false
 
   canAdd(value: unknown): boolean {
     const bytes = Buffer.byteLength(JSON.stringify(value))
     if (this.nodes >= MAX_ERROR_NODES || this.bytes + bytes > MAX_ERROR_OUTPUT_BYTES) {
+      this.exhausted = true
       return false
     }
     this.nodes += 1
@@ -197,6 +199,10 @@ function serializeEntries(value: object, depth: number, seen: WeakSet<object>, b
       return output
     }
     output[outputKey] = isSensitiveKey(key) ? "[redacted]" : "value" in descriptor ? serializeErrorValue(descriptor.value, depth + 1, seen, budget) : truncation("accessor-property")
+    if (budget.exhausted) {
+      output.serialization = truncation("output-budget")
+      return output
+    }
   }
   if (keys.length > MAX_ERROR_ENTRIES && !output.serialization) {
     output.serialization = truncation("max-entries", keys.length - MAX_ERROR_ENTRIES)
