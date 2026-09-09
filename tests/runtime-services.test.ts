@@ -80,9 +80,9 @@ assert.equal(sqlitePhpunitRecipe.workflow.steps[0].args?.some((arg) => arg.start
 assert.deepEqual(JSON.parse(await readFile("runtime-overlays/mdi-native/provenance.json", "utf8")), {
   schema: "wp-codebox/mdi-native-overlay-provenance/v1",
   repository: "Automattic/markdown-database-integration",
-  revision: "11652defdfa88576ee91699b3545ecf0d486f055",
-  archive: "markdown-database-integration-11652def.zip",
-  sha256: "335bb694f7e6b4185f6d514e61c14ec220ab163fa9d959159d6c26411680cf6c",
+  revision: "0bec3f73f5367b692f7b0ab0acfeff55a77500ff",
+  archive: "markdown-database-integration-0bec3f7.zip",
+  sha256: "74af36f66ac7465b900e3d4dff00296f97a94c2859dffcc3502a341e8025d126",
 })
 const mdiPhpunitRecipe = buildWordPressPhpunitRecipe({ pluginSlug: "example", databaseType: "mdi-native" })
 assert.equal(mdiPhpunitRecipe.runtime?.databaseSetup, "custom-drop-in")
@@ -90,11 +90,11 @@ assert.equal(mdiPhpunitRecipe.inputs?.services, undefined)
 assert.ok(mdiPhpunitRecipe.workflow.steps[0].args?.includes("database-type=mdi-native"))
 assert.deepEqual(mdiPhpunitRecipe.inputs?.extra_plugins?.at(-1), {
   source: "wp-codebox:mdi-native",
-  sha256: "335bb694f7e6b4185f6d514e61c14ec220ab163fa9d959159d6c26411680cf6c",
+  sha256: "74af36f66ac7465b900e3d4dff00296f97a94c2859dffcc3502a341e8025d126",
   slug: "markdown-database-integration",
   pluginFile: "markdown-database-integration/markdown-database-integration.php",
   activate: false,
-  metadata: { phase: "pre-install", databaseDropIn: true, revision: "11652defdfa88576ee91699b3545ecf0d486f055" },
+  metadata: { phase: "pre-install", databaseDropIn: true, revision: "0bec3f73f5367b692f7b0ab0acfeff55a77500ff" },
 })
 assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "example", wordpressInstallMode: "do-not-attempt-installing" }).runtime?.wordpressInstallMode, "do-not-attempt-installing")
 const builderDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-builder-"))
