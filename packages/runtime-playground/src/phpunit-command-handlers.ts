@@ -638,8 +638,12 @@ function pg_log_mdi_native_diagnostic(): void {
     if (($diagnostic['code'] ?? '') !== 'markdown_db_native_unsupported_query') {
         return;
     }
-    $reason = preg_replace('/[^A-Za-z0-9_. -]/', '_', (string) ($diagnostic['reason'] ?? 'unknown'));
-    pg_log('MDI_NATIVE_UNSUPPORTED_QUERY:reason=' . substr((string) $reason, 0, 240));
+    $reason = (string) ($diagnostic['reason'] ?? 'unknown');
+    // Reasons are engine-owned identifiers; never surface query text in artifacts.
+    if (1 !== preg_match('/^[a-z0-9_]{1,80}$/D', $reason)) {
+        $reason = 'unknown';
+    }
+    pg_log('MDI_NATIVE_UNSUPPORTED_QUERY:reason=' . $reason);
 }
 
 function pg_install_diagnostics_handlers() {

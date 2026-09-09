@@ -15,6 +15,7 @@ assert.equal(parsePhpunitCompletedResult(passedLog)?.status, "passed")
 assert.equal(parsePhpunitCompletedResult(failedLog)?.failed, 2)
 assert.equal(parsePhpunitCompletedResult("STAGE_FAIL:run_tests:RuntimeException: crashed"), undefined)
 assert.equal(extractPhpunitFailureMessage("MDI_NATIVE_UNSUPPORTED_QUERY:reason=derived_table_not_supported\n"), "mdi_native_unsupported_query: reason=derived_table_not_supported")
+assert.equal(extractPhpunitFailureMessage("MDI_NATIVE_UNSUPPORTED_QUERY:reason=unsupported WHERE token='secret'\n"), "mdi_native_unsupported_query")
 
 const passedEvidence = buildPhpunitTestResults([execution(0)], [{ path: "files/phpunit/.wp-codebox-result.txt", result: parsePhpunitCompletedResult(passedLog)! }])
 assert.equal(passedEvidence.status, "passed")
