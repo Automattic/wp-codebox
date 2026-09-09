@@ -1,5 +1,6 @@
 import type { ArtifactBundle, ExecutionResult, RuntimeInfo } from "@automattic/wp-codebox-core"
 import type { ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
+import { isSensitiveKey, redactString } from "@automattic/wp-codebox-core"
 import { listCliRecipeCommandDefinitions } from "./runtime-backends.js"
 
 interface CliError {
@@ -94,42 +95,270 @@ export async function captureStdout<T>(callback: () => Promise<T>): Promise<{ re
   }
 }
 
+const MAX_ERROR_DEPTH = 8
+const MAX_ERROR_ENTRIES = 50
+const MAX_ERROR_NODES = 500
+// This is the complete UTF-8, pretty-printed failure response limit.
+export const MAX_ERROR_OUTPUT_BYTES = 192 * 1024
+const MAX_ERROR_SERIALIZATION_BYTES = 160 * 1024
+const MAX_DIAGNOSTIC_DETAILS_BYTES = 8 * 1024
+const MAX_ERROR_STRING_BYTES = 8 * 1024
+
 export function serializeError(error: unknown): CliError {
-  if (error instanceof Error) {
-    const extras = Object.fromEntries(
-      Object.entries(error).filter(([key]) => !["name", "message", "stack"].includes(key)),
-    )
-    const cause = "cause" in error && error.cause !== undefined ? serializeError(error.cause) : undefined
+  const budget = new ErrorSerializationBudget(MAX_ERROR_SERIALIZATION_BYTES)
+  const serialized = serializeErrorValue(error, 0, new WeakSet(), budget)
+  return isCliError(serialized) ? serialized : { name: "Error", message: errorMessage(error) }
+}
+
+class ErrorSerializationBudget {
+  bytes = 0
+  nodes = 0
+  exhausted = false
+
+  constructor(private readonly maximumBytes = MAX_ERROR_SERIALIZATION_BYTES) {}
+
+  canAdd(value: unknown): boolean {
+    const bytes = Buffer.byteLength(JSON.stringify(value))
+    if (this.nodes >= MAX_ERROR_NODES || this.bytes + bytes > this.maximumBytes) {
+      this.exhausted = true
+      return false
+    }
+    this.nodes += 1
+    this.bytes += bytes
+    return true
+  }
+}
+
+function serializeErrorValue(value: unknown, depth: number, seen: WeakSet<object>, budget: ErrorSerializationBudget): unknown {
+  if (!budget.canAdd(typeof value)) {
+    return truncation("output-budget")
+  }
+  if (isBinary(value)) {
+    const binary = { type: binaryType(value), byteLength: binaryByteLength(value), omitted: true }
+    return budget.canAdd(binary) ? binary : truncation("output-budget")
+  }
+  if (typeof value === "string") {
+    return budgetedString(value, budget)
+  }
+  if (value === null || typeof value === "boolean" || typeof value === "number") {
+    return value
+  }
+  if (typeof value === "bigint") {
+    return budgetedString(`${value}n`, budget)
+  }
+  if (typeof value === "undefined") {
+    return undefined
+  }
+  if (typeof value === "function" || typeof value === "symbol") {
+    return { type: typeof value, omitted: true }
+  }
+  if (depth >= MAX_ERROR_DEPTH) {
+    return truncation("max-depth")
+  }
+
+  if (seen.has(value)) {
+    return truncation("circular-reference")
+  }
+  seen.add(value)
+
+  if (value instanceof Error) {
+    const name = safeProperty(value, "name")
+    const message = safeProperty(value, "message")
+    const code = safeProperty(value, "code")
+    const causeValue = safeProperty(value, "cause")
+    // Reserve the identity needed to diagnose this error before traversing extras.
+    const serializedName = budgetedText(typeof name === "string" ? name : "Error", "Error", budget)
+    const serializedMessage = budgetedText(typeof message === "string" ? message : "Unknown error", "Unknown error", budget)
+    const serializedCode = typeof code === "string" ? budgetedText(code, undefined, budget) : undefined
+    const extras = serializeEntries(value, depth, seen, budget, new Set(["name", "message", "stack", "cause", "code"]))
+    const cause = causeValue === undefined ? undefined : serializeErrorValue(causeValue, depth + 1, seen, budget)
     return {
-      name: error.name,
-      message: error.message,
-      ...("code" in error && typeof error.code === "string" ? { code: error.code } : {}),
+      name: serializedName,
+      message: serializedMessage,
+      ...(serializedCode === undefined ? {} : { code: serializedCode }),
       ...extras,
-      ...(cause ? { cause } : {}),
+      ...(cause === undefined ? {} : { cause }),
     }
   }
 
-  return { name: "Error", message: String(error) }
+  if (Array.isArray(value)) {
+    const entries: unknown[] = []
+    for (let index = 0; index < Math.min(value.length, MAX_ERROR_ENTRIES); index += 1) {
+      entries.push(serializeErrorValue(safeProperty(value, String(index)), depth + 1, seen, budget))
+    }
+    return value.length > MAX_ERROR_ENTRIES ? [...entries, truncation("max-entries", value.length - MAX_ERROR_ENTRIES)] : entries
+  }
+
+  return serializeEntries(value, depth, seen, budget)
+}
+
+function serializeEntries(value: object, depth: number, seen: WeakSet<object>, budget: ErrorSerializationBudget, excluded = new Set<string>()): Record<string, unknown> {
+  const output: Record<string, unknown> = {}
+  const keys = safeEnumerableKeys(value).filter((key) => !excluded.has(key))
+  for (const key of keys.slice(0, MAX_ERROR_ENTRIES)) {
+    const descriptor = safeDescriptor(value, key)
+    if (!descriptor) continue
+    const outputKey = boundedKey(key)
+    if (!budget.canAdd(outputKey)) {
+      output.serialization = truncation("output-budget")
+      return output
+    }
+    // Define untrusted keys as data properties so __proto__ cannot change the output prototype.
+    Object.defineProperty(output, outputKey, {
+      value: isSensitiveKey(key) ? "[redacted]" : "value" in descriptor ? serializeErrorValue(descriptor.value, depth + 1, seen, budget) : truncation("accessor-property"),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    if (budget.exhausted) {
+      output.serialization = truncation("output-budget")
+      return output
+    }
+  }
+  if (keys.length > MAX_ERROR_ENTRIES && !output.serialization) {
+    output.serialization = truncation("max-entries", keys.length - MAX_ERROR_ENTRIES)
+  }
+  return output
+}
+
+function safeEnumerableKeys(value: object): string[] {
+  try {
+    return Object.keys(value)
+  } catch {
+    return []
+  }
+}
+
+function safeDescriptor(value: object, key: string): PropertyDescriptor | undefined {
+  try {
+    return Object.getOwnPropertyDescriptor(value, key)
+  } catch {
+    return undefined
+  }
+}
+
+function safeProperty(value: object, key: string): unknown {
+  let current: object | null = value
+  while (current) {
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(current, key)
+      if (descriptor) return "value" in descriptor ? descriptor.value : undefined
+      current = Object.getPrototypeOf(current)
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
+
+function boundedKey(key: string): string {
+  if (isSensitiveKey(key)) return "[redacted]"
+  const redacted = redactString(key)
+  return Buffer.byteLength(redacted) <= MAX_ERROR_STRING_BYTES ? redacted : `${Buffer.from(redacted).subarray(0, MAX_ERROR_STRING_BYTES).toString("utf8")}...[truncated]`
+}
+
+function truncation(reason: string, omittedEntries?: number): Record<string, unknown> {
+  return { omitted: true, reason, ...(omittedEntries === undefined ? {} : { omittedEntries }) }
+}
+
+function isCliError(value: unknown): value is CliError {
+  return Boolean(value && typeof value === "object" && typeof (value as CliError).name === "string" && typeof (value as CliError).message === "string")
+}
+
+function errorMessage(value: unknown): string {
+  if (typeof value === "string") return boundedText(value)
+  if (value instanceof Error) {
+    const message = safeProperty(value, "message")
+    return boundedText(typeof message === "string" ? message : "Unknown error")
+  }
+  try {
+    return boundedText(String(value))
+  } catch {
+    return "Unknown error"
+  }
+}
+
+function budgetedString(value: string, budget: ErrorSerializationBudget): string | Record<string, unknown> {
+  const bounded = boundedString(value)
+  return budget.canAdd(bounded) ? bounded : truncation("output-budget")
+}
+
+function boundedString(value: string): string | { value: string; truncated: true; originalByteLength: number } {
+  const redacted = redactString(value)
+  const bytes = Buffer.byteLength(redacted)
+  if (bytes <= MAX_ERROR_STRING_BYTES) {
+    return redacted
+  }
+  return { value: Buffer.from(redacted).subarray(0, MAX_ERROR_STRING_BYTES).toString("utf8"), truncated: true, originalByteLength: bytes }
+}
+
+function boundedText(value: string): string {
+  const bounded = boundedString(value)
+  return typeof bounded === "string" ? bounded : `${bounded.value}\n[truncated; originalByteLength=${bounded.originalByteLength}]`
+}
+
+function budgetedText(value: string, fallback: string | undefined, budget: ErrorSerializationBudget): string | undefined {
+  const bounded = boundedText(value)
+  if (budget.canAdd(bounded)) return bounded
+  if (fallback && budget.canAdd(fallback)) return fallback
+  return undefined
+}
+
+function isBinary(value: unknown): value is ArrayBuffer | ArrayBufferView {
+  return value instanceof ArrayBuffer || ArrayBuffer.isView(value)
+}
+
+function binaryType(value: ArrayBuffer | ArrayBufferView): string {
+  if (value instanceof ArrayBuffer) return "ArrayBuffer"
+  if (Buffer.isBuffer(value)) return "Buffer"
+  if (value instanceof DataView) return "DataView"
+  for (const constructor of [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array]) {
+    if (value instanceof constructor) return constructor.name
+  }
+  return "ArrayBufferView"
+}
+
+function binaryByteLength(value: ArrayBuffer | ArrayBufferView): number {
+  try {
+    if (value instanceof ArrayBuffer) {
+      const byteLengthGetter = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")?.get
+      return typeof byteLengthGetter === "function" ? byteLengthGetter.call(value) : 0
+    }
+    if (value instanceof DataView) {
+      const byteLengthGetter = Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength")?.get
+      return typeof byteLengthGetter === "function" ? byteLengthGetter.call(value) : 0
+    }
+    const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as { byteLength: number }
+    const byteLengthGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")?.get
+    return typeof byteLengthGetter === "function" ? byteLengthGetter.call(value) : 0
+  } catch {
+    return 0
+  }
 }
 
 export function cliFailureEnvelope(command: string | undefined, message: string, details: Record<string, unknown> = {}): Record<string, unknown> {
+  const { error, code, ...diagnosticDetails } = details
   return {
     schema: "wp-codebox/cli-failure/v1",
     success: false,
     status: "error",
-    ...(command ? { command } : {}),
-    error: {
+    ...(command ? { command: boundedText(command) } : {}),
+    error: isCliError(error) ? error : {
       name: "Error",
-      message,
+      message: boundedText(message),
     },
     diagnostics: [
       {
-        code: "cli-error",
-        message,
-        ...details,
+        code: typeof code === "string" ? boundedText(code) : "cli-error",
+        message: boundedText(message),
+        ...serializeDiagnosticDetails(diagnosticDetails),
       },
     ],
   }
+}
+
+function serializeDiagnosticDetails(details: Record<string, unknown>): Record<string, unknown> {
+  return serializeEntries(details, 0, new WeakSet(), new ErrorSerializationBudget(MAX_DIAGNOSTIC_DETAILS_BYTES))
 }
 
 export function wantsJsonOutput(args: readonly string[]): boolean {
