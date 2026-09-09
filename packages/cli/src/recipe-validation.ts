@@ -1576,6 +1576,12 @@ export function hasExplicitSiteSeedSelectors(scope: NonNullable<WorkspaceRecipeS
 
 async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"][number], path: string, addIssue: (code: string, path: string, message: string) => void, recipeDirectory: string): Promise<void> {
   validateRecipeStepDescriptorArgs(step, path, addIssue)
+  for (const [index, resultPath] of (step.resultPaths ?? []).entries()) {
+    validateAbsoluteSandboxPath(resultPath.path, `${path}.resultPaths[${index}].path`, addIssue)
+    if (step.command !== "wordpress.phpunit") {
+      addIssue("unsupported-result-path-command", `${path}.resultPaths[${index}]`, "resultPaths are currently supported by wordpress.phpunit, which captures its command VFS directly after PHPUnit shutdown.")
+    }
+  }
 
   if (isSmtpSinkRecipeOperation(step.command)) {
     const allowed = step.command === "host/smtp.inspect" ? new Set(["service", "limit", "recipient", "recipient-label", "subject-marker", "link-marker"]) : new Set(["service"])

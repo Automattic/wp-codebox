@@ -47,6 +47,15 @@ try {
       { source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" },
     ],
   })
+  recipe.workflow.steps[0]!.resultPaths = [{
+    name: "shutdown-capture",
+    type: "wp-codebox/phpunit-shutdown-capture/v1",
+    path: "/tmp/wp-codebox-shutdown-capture.json",
+    maxBytes: 4096,
+  }]
+  // This legacy post-workflow collector intentionally runs in a new request.
+  // The direct resultPaths capture below is the same-command alternative.
+  recipe.artifacts = { paths: [{ name: "legacy-shutdown-capture", path: "/tmp/wp-codebox-shutdown-capture.json", required: false, parseJson: true }] }
   await writeFile(recipePath, `${JSON.stringify(recipe)}\n`)
 
   const discoveryRecipe = buildWordPressPhpunitRecipe({
@@ -101,6 +110,10 @@ try {
   const diagnostic = await readFile(join(artifactsPath, runtime.paths?.runtimeDirectory ?? "", "files/phpunit/.pg-test-result.txt"), "utf8")
   assert.match(diagnostic, /^DISCOVERY: .* found=1$/m, "actual PHPUnit runner must discover the fixture test file")
   assert.match(diagnostic, /^STAGE_BEGIN:run_tests/m, "actual PHPUnit runner must reach its test stage")
+  assert.match(diagnostic, /^SHUTDOWN_CAPTURE:bytes=\d+ exists=1 path=\/tmp\/wp-codebox-shutdown-capture\.json$/m, "fixture shutdown callback must prove its write completed in the PHPUnit request")
+  const shutdownCapture = JSON.parse(await readFile(join(artifactsPath, runtime.paths?.runtimeDirectory ?? "", "files", "command-results", "shutdown-capture.json"), "utf8")) as { schema?: string, source?: string }
+  assert.equal(shutdownCapture.schema, "wp-codebox/phpunit-shutdown-capture/v1")
+  assert.equal(shutdownCapture.source, "fixture-shutdown")
   const passingEvidence = await readTestResults(artifactsPath, runtime.paths?.runtimeDirectory)
   const completedResult = await readFile(join(artifactsPath, runtime.paths?.runtimeDirectory ?? "", "files/phpunit/.wp-codebox-result.txt"), "utf8").catch((error) => String(error))
   assert.match(completedResult, /"status":"passed","total":6/)
@@ -142,7 +155,7 @@ async function writeFixture(): Promise<void> {
   await mkdir(join(plugin, "tests"), { recursive: true })
   await mkdir(join(plugin, "specs"), { recursive: true })
   await mkdir(dependency, { recursive: true })
-  await writeFile(join(plugin, "readonly-phpunit-fixture.php"), "<?php\n/**\n * Plugin Name: Readonly PHPUnit Fixture\n */\nadd_action('init', static function (): void { update_option('wp_codebox_parent_init_ran', 1); add_action('init', static function (): void { update_option('wp_codebox_nested_init_ran', 1); }, 15); }, 0);\n")
+  await writeFile(join(plugin, "readonly-phpunit-fixture.php"), "<?php\n/**\n * Plugin Name: Readonly PHPUnit Fixture\n */\nregister_shutdown_function(static function (): void { $path = '/tmp/wp-codebox-shutdown-capture.json'; $payload = json_encode(array('schema' => 'wp-codebox/phpunit-shutdown-capture/v1', 'source' => 'fixture-shutdown')); $bytes = file_put_contents($path, $payload); file_put_contents('/tmp/wp-codebox-phpunit-result.txt', 'SHUTDOWN_CAPTURE:bytes=' . (int) $bytes . ' exists=' . (is_file($path) ? '1' : '0') . ' path=' . $path . \"\\n\", FILE_APPEND); });\nadd_action('init', static function (): void { update_option('wp_codebox_parent_init_ran', 1); add_action('init', static function (): void { update_option('wp_codebox_nested_init_ran', 1); }, 15); }, 0);\n")
   await writeFile(join(plugin, "phpunit.xml.dist"), "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<phpunit><testsuites><testsuite name=\"readonly-cache\"><directory>tests</directory></testsuite></testsuites></phpunit>\n")
   await writeFile(join(plugin, "phpunit.discovery.xml"), "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<phpunit><testsuites><testsuite name=\"discovery\"><directory suffix=\"Spec.php\">specs</directory><file>tests/ExplicitCase.php</file><exclude>specs/ExcludedSpec.php</exclude></testsuite></testsuites></phpunit>\n")
   await writeFile(join(plugin, "source-sentinel.bin"), sentinel)

@@ -42,7 +42,7 @@ interface PlaygroundCommandRuntime {
   runDbOperation(spec: ExecutionSpec): Promise<string>
   runAbility(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runBench(spec: ExecutionSpec): Promise<string>
-  runPhpunit(spec: ExecutionSpec): Promise<string>
+  runPhpunit(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runPluginCheck(spec: ExecutionSpec): Promise<string>
   runPluginSetup(spec: ExecutionSpec): Promise<string>
   runPluginState(spec: ExecutionSpec): Promise<string>

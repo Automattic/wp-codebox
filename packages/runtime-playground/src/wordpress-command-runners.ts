@@ -58,7 +58,7 @@ import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } fr
 import { parsePhpunitOutput } from "./phpunit-test-results.js"
 import { runRuntimeExternalHttpLoad, waitForRuntimePreviewReady, type RuntimeExternalHttpLoadResult } from "./external-http-load.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
-import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, PERFORMANCE_OBSERVATION_SCHEMA, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
+import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, PERFORMANCE_OBSERVATION_SCHEMA, captureArtifactFile, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
 import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
 import { executeHostHttpTransportRequest, parseHostHttpTransportMessage } from "./host-http-transport.js"
 
@@ -937,7 +937,7 @@ export async function runPhpunitCommand({
   runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
-}): Promise<string> {
+}): Promise<string | RuntimeCommandResultEnvelope> {
   const args = spec.args ?? []
   const phpunitXmlArg = argValue(args, "phpunit-xml")
   const explicitCode = argValue(args, "code") || argValue(args, "code-file")
@@ -1041,6 +1041,7 @@ export async function runPhpunitCommand({
   if (completed) {
     await persistPluginPhpunitCompletedResult(artifactRoot, completed, processIdentity)
   }
+  const resultPathArtifacts = await captureCommandResultPaths(server, spec, artifactRoot)
   try {
     assertPlaygroundResponseOk("wordpress.phpunit", response)
   } catch (error) {
@@ -1056,7 +1057,58 @@ export async function runPhpunitCommand({
     return `${JSON.stringify(discovery)}\n`
   }
 
-  return response.text
+  return resultPathArtifacts.length === 0 ? response.text : createRuntimeCommandResultEnvelope({
+    status: "ok",
+    stdout: response.text,
+    artifactRefs: resultPathArtifacts,
+  })
+}
+
+async function captureCommandResultPaths(server: PlaygroundCliServer, spec: ExecutionSpec, artifactRoot: string): Promise<RuntimeEpisodeTraceRef[]> {
+  const declarations = spec.resultPaths ?? []
+  if (declarations.length === 0) return []
+  if (!server.playground.readFileAsText) {
+    throw resultPathCollectionError("runtime does not support direct VFS result capture")
+  }
+
+  const refs: RuntimeEpisodeTraceRef[] = []
+  for (const declaration of declarations) {
+    if (!declaration.path.startsWith("/") || declaration.path.includes("\0") || declaration.path.split("/").includes("..")) {
+      throw resultPathCollectionError(`invalid result path: ${declaration.path}`)
+    }
+    try {
+      const contents = await server.playground.readFileAsText(declaration.path)
+      const bytes = Buffer.byteLength(contents, "utf8")
+      const maxBytes = declaration.maxBytes ?? 1024 * 1024
+      if (bytes > maxBytes) throw resultPathCollectionError(`result path exceeds ${maxBytes} bytes: ${declaration.path}`)
+      JSON.parse(contents)
+      const captured = await captureArtifactFile({
+        root: artifactRoot,
+        path: `files/command-results/${declaration.name}.json`,
+        kind: declaration.type,
+        contentType: "application/json",
+        contents,
+        maxBytes,
+        redaction: { policy: "applied", sensitive: true, reason: "Command result JSON is redacted before artifact capture." },
+        provenance: { source: "wordpress-playground", operation: "capture-command-result-path", id: declaration.path },
+      })
+      if (captured.status !== "captured") throw resultPathCollectionError(`could not capture result path: ${declaration.path}`)
+      if (!captured.sha256) throw resultPathCollectionError(`captured result path has no digest: ${declaration.path}`)
+      refs.push({ kind: declaration.type, id: declaration.name, path: captured.path, sourcePath: declaration.path, contentType: captured.contentType ?? "application/json", digest: { algorithm: "sha256", value: captured.sha256 } })
+    } catch (error) {
+      if (declaration.required === false) continue
+      throw resultPathCollectionError(`required result path is unavailable: ${declaration.path}`, error)
+    }
+  }
+  return refs
+}
+
+function resultPathCollectionError(message: string, cause?: unknown): Error {
+  return Object.assign(new Error(`Command result-path collection failed: ${message}`, cause === undefined ? undefined : { cause }), {
+    name: "CommandResultPathCollectionError",
+    code: "command-result-path-collection-failed",
+    operation: "capture-command-result-path",
+  })
 }
 
 function boundedProcessIdentity(value: string | undefined): string {
