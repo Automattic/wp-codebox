@@ -748,6 +748,7 @@ assert.ok(preinstallCode.includes("STAGE_FAIL:preinstall:"), "multisite preinsta
 assert.ok(preinstallCode.includes("STAGE_FATAL:preinstall:"), "multisite preinstall records fatal diagnostics")
 assert.ok(preinstallCode.includes("pg_preinstall_log('before-installer-include')"), "multisite preinstall records its installer boundary")
 assert.ok(preinstallCode.includes("installer-blogs:"), "multisite preinstall records its canonical blog rows")
+assert.ok(preinstallCode.includes("/wordpress/wp-content/.wp-codebox-mdi/state"), "native preinstall stores canonical state in the persistent runtime VFS")
 
 const mysqlMultisiteInvocations: string[] = []
 await runPhpunitCommand({

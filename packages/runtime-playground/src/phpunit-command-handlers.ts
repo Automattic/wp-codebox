@@ -414,13 +414,13 @@ function managedPhpunitConfigWriterPhp(): string {
         }
     } elseif ($database_type === 'mdi-native') {
         $config .= <<<'CONFIG'
-foreach (array('/tmp/wp-codebox-mdi/content', '/tmp/wp-codebox-mdi/state') as $directory) { if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) { throw new RuntimeException('Could not create isolated MDI canonical state directory.'); } }
+foreach (array('/wordpress/wp-content/.wp-codebox-mdi/content', '/wordpress/wp-content/.wp-codebox-mdi/state') as $directory) { if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) { throw new RuntimeException('Could not create isolated MDI canonical state directory.'); } }
 CONFIG;
         foreach (array(
             'MARKDOWN_DB_BACKEND' => 'mdi-native',
             'MARKDOWN_DB_MODE' => 'primary',
-            'MARKDOWN_DB_CONTENT_DIR' => '/tmp/wp-codebox-mdi/content',
-            'MARKDOWN_DB_STATE_DIR' => '/tmp/wp-codebox-mdi/state',
+            'MARKDOWN_DB_CONTENT_DIR' => '/wordpress/wp-content/.wp-codebox-mdi/content',
+            'MARKDOWN_DB_STATE_DIR' => '/wordpress/wp-content/.wp-codebox-mdi/state',
             'DB_NAME' => 'wptests',
             'DB_USER' => 'root',
             'DB_PASSWORD' => '',
