@@ -98,7 +98,7 @@ export async function captureStdout<T>(callback: () => Promise<T>): Promise<{ re
 const MAX_ERROR_DEPTH = 8
 const MAX_ERROR_ENTRIES = 50
 const MAX_ERROR_NODES = 500
-const MAX_ERROR_OUTPUT_BYTES = 192 * 1024
+export const MAX_ERROR_OUTPUT_BYTES = 192 * 1024
 const MAX_ERROR_STRING_BYTES = 8 * 1024
 
 export function serializeError(error: unknown): CliError {
@@ -127,7 +127,8 @@ function serializeErrorValue(value: unknown, depth: number, seen: WeakSet<object
     return truncation("output-budget")
   }
   if (isBinary(value)) {
-    return { type: binaryType(value), byteLength: binaryByteLength(value), omitted: true }
+    const binary = { type: binaryType(value), byteLength: binaryByteLength(value), omitted: true }
+    return budget.canAdd(binary) ? binary : truncation("output-budget")
   }
   if (typeof value === "string") {
     return budgetedString(value, budget)
@@ -136,7 +137,7 @@ function serializeErrorValue(value: unknown, depth: number, seen: WeakSet<object
     return value
   }
   if (typeof value === "bigint") {
-    return `${value}n`
+    return budgetedString(`${value}n`, budget)
   }
   if (typeof value === "undefined") {
     return undefined
@@ -158,12 +159,16 @@ function serializeErrorValue(value: unknown, depth: number, seen: WeakSet<object
     const message = safeProperty(value, "message")
     const code = safeProperty(value, "code")
     const causeValue = safeProperty(value, "cause")
+    // Reserve the identity needed to diagnose this error before traversing extras.
+    const serializedName = budgetedText(typeof name === "string" ? name : "Error", "Error", budget)
+    const serializedMessage = budgetedText(typeof message === "string" ? message : "Unknown error", "Unknown error", budget)
+    const serializedCode = typeof code === "string" ? budgetedText(code, undefined, budget) : undefined
     const extras = serializeEntries(value, depth, seen, budget, new Set(["name", "message", "stack", "cause", "code"]))
     const cause = causeValue === undefined ? undefined : serializeErrorValue(causeValue, depth + 1, seen, budget)
     return {
-      name: boundedText(typeof name === "string" ? name : "Error"),
-      message: boundedText(typeof message === "string" ? message : "Unknown error"),
-      ...(typeof code === "string" ? { code: boundedText(code) } : {}),
+      name: serializedName,
+      message: serializedMessage,
+      ...(serializedCode === undefined ? {} : { code: serializedCode }),
       ...extras,
       ...(cause === undefined ? {} : { cause }),
     }
@@ -275,25 +280,50 @@ function boundedText(value: string): string {
   return typeof bounded === "string" ? bounded : `${bounded.value}\n[truncated; originalByteLength=${bounded.originalByteLength}]`
 }
 
+function budgetedText(value: string, fallback: string | undefined, budget: ErrorSerializationBudget): string | undefined {
+  const bounded = boundedText(value)
+  if (budget.canAdd(bounded)) return bounded
+  if (fallback && budget.canAdd(fallback)) return fallback
+  return undefined
+}
+
 function isBinary(value: unknown): value is ArrayBuffer | ArrayBufferView {
   return value instanceof ArrayBuffer || ArrayBuffer.isView(value)
 }
 
 function binaryType(value: ArrayBuffer | ArrayBufferView): string {
-  return value instanceof ArrayBuffer ? "ArrayBuffer" : value.constructor.name
+  if (value instanceof ArrayBuffer) return "ArrayBuffer"
+  if (Buffer.isBuffer(value)) return "Buffer"
+  if (value instanceof DataView) return "DataView"
+  for (const constructor of [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array]) {
+    if (value instanceof constructor) return constructor.name
+  }
+  return "ArrayBufferView"
 }
 
 function binaryByteLength(value: ArrayBuffer | ArrayBufferView): number {
-  return value.byteLength
+  try {
+    if (value instanceof ArrayBuffer) {
+      return ArrayBuffer.prototype.byteLength.call(value)
+    }
+    if (value instanceof DataView) {
+      return DataView.prototype.byteLength.call(value)
+    }
+    const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as { byteLength: number }
+    return Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")?.get?.call(value) ?? 0
+  } catch {
+    return 0
+  }
 }
 
 export function cliFailureEnvelope(command: string | undefined, message: string, details: Record<string, unknown> = {}): Record<string, unknown> {
+  const { error, ...diagnosticDetails } = details
   return {
     schema: "wp-codebox/cli-failure/v1",
     success: false,
     status: "error",
     ...(command ? { command } : {}),
-    error: {
+    error: isCliError(error) ? error : {
       name: "Error",
       message,
     },
@@ -301,7 +331,7 @@ export function cliFailureEnvelope(command: string | undefined, message: string,
       {
         code: "cli-error",
         message,
-        ...details,
+        ...diagnosticDetails,
       },
     ],
   }
