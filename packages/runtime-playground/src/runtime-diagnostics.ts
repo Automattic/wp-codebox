@@ -17,8 +17,21 @@ export async function persistPluginPhpunitResult(server: PlaygroundCliServer, vf
   await persistPhpunitResult(server, vfsPath, join(artifactRoot, "files", "phpunit", ...(namespace ? [namespace] : []), ".pg-test-result.txt"))
 }
 
-export async function persistPluginPhpunitJunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string, namespace?: string): Promise<CapturedArtifactFile | undefined> {
-  if (!server.playground.readFileAsText) return undefined
+export async function clearPluginPhpunitJunitResult(server: PlaygroundCliServer, vfsPath: string): Promise<void> {
+  if (!server.playground.unlink) return
+
+  try {
+    await server.playground.unlink(vfsPath)
+  } catch {
+    // A missing report is expected before the first PHPUnit command.
+  }
+}
+
+export async function persistPluginPhpunitJunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string, namespace?: string): Promise<CapturedArtifactFile> {
+  const artifactPath = join("files", "phpunit", ...(namespace ? [namespace] : []), ".wp-codebox-junit.xml")
+  if (!server.playground.readFileAsText) {
+    return { schema: "wp-codebox/captured-artifact-file/v1", status: "failed", path: artifactPath, reason: "runtime-read-unavailable" }
+  }
 
   try {
     const contents = await server.playground.readFileAsText(vfsPath)
@@ -33,8 +46,13 @@ export async function persistPluginPhpunitJunitResult(server: PlaygroundCliServe
       provenance: { source: "wordpress-playground", operation: "persist-phpunit-junit-result", id: vfsPath },
     })
   } catch {
-    return undefined
+    return { schema: "wp-codebox/captured-artifact-file/v1", status: "failed", path: artifactPath, reason: "runtime-read-failed" }
   }
+}
+
+export function phpunitJunitCaptureDiagnostic(capture: CapturedArtifactFile): string | undefined {
+  if (capture.status === "captured") return undefined
+  return `JUnit artifact capture ${capture.status}: ${capture.reason ?? "unknown"}.`
 }
 
 export async function persistPluginPhpunitCompletedResult(artifactRoot: string, result: PhpunitCompletedResult, namespace?: string): Promise<void> {

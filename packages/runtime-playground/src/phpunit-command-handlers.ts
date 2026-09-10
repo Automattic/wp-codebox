@@ -529,6 +529,7 @@ $plugin_path = '/wordpress/wp-content/plugins/' . $plugin_slug;
 $runtime_cwd = ${JSON.stringify(options.cwd || `/wordpress/wp-content/plugins/${options.pluginSlug}`)};
 $result_file = ${JSON.stringify(options.resultFile ?? PLUGIN_PHPUNIT_RESULT_FILE)};
 $junit_file = ${JSON.stringify(options.junitFile ?? "/tmp/wp-codebox-phpunit-junit.xml")};
+@unlink($junit_file);
 $current_stage = 'preboot';
 $pg_stage_output_buffering = false;
 $autoload_file = ${JSON.stringify(options.autoloadFile)};

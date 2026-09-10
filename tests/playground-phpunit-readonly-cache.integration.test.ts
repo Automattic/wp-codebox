@@ -120,7 +120,7 @@ try {
   assert.equal(passingEvidence.status, "passed")
   assert.deepEqual(passingEvidence.summary, { total: 6, passed: 6, failed: 0, skipped: 0, unknown: 0 })
 
-  await writeFile(join(plugin, "tests", "ReadonlyCacheTest.php"), "<?php\nclass ReadonlyCacheTest extends WP_UnitTestCase { public function test_passes(): void { $this->assertTrue(true); } public static function failure_cases(): array { return array_map(static fn(int $index): array => ['fixture-case-' . $index, $index], range(1, 51)); } /** @dataProvider failure_cases */ public function test_large_failure_output(string $identity): void { $this->fail($identity . ' Authorization: Bearer literal-credential-for-redaction ' . str_repeat('response-cap-detail ', 256)); } public function test_skips(): void { $this->markTestSkipped('fixture skipped'); } }\n")
+  await writeFile(join(plugin, "tests", "ReadonlyCacheTest.php"), "<?php\nclass ReadonlyCacheTest extends WP_UnitTestCase { public function test_passes(): void { $this->assertTrue(true); } public static function failure_cases(): array { return array_map(static fn(int $index): array => ['fixture-case-' . $index, $index], range(1, 49)); } /** @dataProvider failure_cases */ public function test_large_failure_output(string $identity): void { $this->fail($identity . ' Authorization: Bearer literal-credential-for-redaction ' . str_repeat('response-cap-detail ', 256)); } public function test_error_output(): void { throw new RuntimeException('fixture-error-50 credential=literal-credential-for-redaction ' . str_repeat('response-cap-detail ', 256)); } public function test_fixture_skip_51(): void { $this->markTestSkipped('fixture-skip-51'); } }\n")
   const failedOutput = await runFailedRecipe()
   assert.equal(failedOutput.success, false)
   assert.match(failedOutput.error?.message ?? "", /failureClassification=runtime-command-failure/)
@@ -130,15 +130,17 @@ try {
   const failedRuntime = JSON.parse(await readFile(join(failingArtifactsPath, "latest-runtime.json"), "utf8")) as { paths?: { runtimeDirectory?: string } }
   const failingEvidence = await readTestResults(failingArtifactsPath, failedRuntime.paths?.runtimeDirectory)
   assert.equal(failingEvidence.status, "failed")
-  assert.deepEqual(failingEvidence.summary, { total: 53, passed: 1, failed: 51, skipped: 1, unknown: 0 })
+  assert.deepEqual(failingEvidence.summary, { total: 52, passed: 1, failed: 50, skipped: 1, unknown: 0 })
   assert(failingEvidence.rawLogReferences.some((reference) => reference.path === "files/phpunit/.pg-test-result.txt"))
   assert(failingEvidence.rawLogReferences.some((reference) => reference.path === "files/phpunit/.wp-codebox-junit.xml"))
   const junitPath = join(failingArtifactsPath, failedRuntime.paths?.runtimeDirectory ?? "", "files/phpunit/.wp-codebox-junit.xml")
   const junit = await readFile(junitPath, "utf8")
   assert(Buffer.byteLength(junit) > 20_000, "JUnit artifact must retain failure detail beyond the bounded command response")
-  for (let index = 1; index <= 51; index += 1) {
+  for (let index = 1; index <= 49; index += 1) {
     assert.match(junit, new RegExp(`fixture-case-${index}`), `JUnit artifact must retain fixture-case-${index}`)
   }
+  assert.match(junit, /fixture-error-50/)
+  assert.match(junit, /name="test_fixture_skip_51" class="ReadonlyCacheTest"/)
   assert.doesNotMatch(junit, /literal-credential-for-redaction/)
   const manifest = JSON.parse(await readFile(join(failingArtifactsPath, failedRuntime.paths?.runtimeDirectory ?? "", "manifest.json"), "utf8")) as { files?: Array<{ path?: string, contentType?: string, sha256?: { value?: string } }> }
   const junitManifest = manifest.files?.find((file) => file.path === "files/phpunit/.wp-codebox-junit.xml")
