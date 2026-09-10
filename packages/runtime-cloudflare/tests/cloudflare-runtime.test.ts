@@ -503,7 +503,7 @@ test("Cloudflare canonical runtime patches the unique init call with runtime per
   assert.doesNotMatch(patcher, /mu-plugins|wp_schedule_site_health_cron/)
   assert.doesNotMatch(worker, /materializeCanonicalCronAdapter|wp-codebox-canonical-cron-policy/)
   assert.match(worker, /runtimeBucket\?: R2Bucket,\n  shouldPatchCanonicalRuntimePoliciesAtInit = false,\n  uploadFiles\?: RuntimeFile\[\],\n  wpContentFiles\?: RuntimeFile\[\],/)
-  assert.match(worker, /authConstants, bucket, true, revision\.uploads, revision\.wpContent, revision\.wpContentDeleted, includeWebsiteImporter, trace, revision\.wpContentR2OnlyPaths\)/)
+  assert.match(worker, /authConstants, bucket, true, revision\.uploads, revision\.wpContent, revision\.wpContentDeleted, includeWebsiteImporter, trace, revision\.wpContentR2OnlyPaths, undefined, nativeRuntime\)/)
   assert.match(worker, /env\.WORDPRESS_STATE_BUCKET, true, undefined, undefined, \[\], false, trace\)/)
   assert.match(worker, /canonicalBootstrapPasswordCode/)
   assert.match(worker, /canonicalBootstrapUrlCode/)

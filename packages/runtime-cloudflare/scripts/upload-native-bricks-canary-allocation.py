@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upload only a prepared native-api/native-engine namespace to the existing disposable canary."""
+"""Upload only a prepared native rehearsal namespace to the existing disposable canary."""
 import concurrent.futures, hashlib, json, sqlite3, sys, time, tomllib
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -10,7 +10,7 @@ D1='fe4d6486-6cd6-4a2e-9542-4f2dd8af7d8a'
 output=Path(sys.argv[1]).resolve()
 prepared=json.loads((output/'prepared.json').read_text())
 site=prepared.get('siteId')
-if site not in {'native-api','native-engine'}: raise RuntimeError('This bounded uploader accepts only the two isolated native rehearsal namespaces.')
+if site not in {'native-api','native-engine','native-sales-rehearsal'}: raise RuntimeError('This bounded uploader accepts only explicitly named isolated native rehearsal namespaces.')
 state=Path(prepared['stateDirectory'])/'v3'
 oauth=tomllib.loads((Path.home()/'Library/Preferences/.wrangler/config/default.toml').read_text())['oauth_token']
 base='https://api.cloudflare.com/client/v4/accounts/'+ACCOUNT
