@@ -18,7 +18,7 @@ export async function persistPluginPhpunitResult(server: PlaygroundCliServer, vf
 }
 
 export async function clearPluginPhpunitJunitResult(server: PlaygroundCliServer, vfsPath: string): Promise<void> {
-  if (!server.playground.unlink) return
+  if (!server.playground?.unlink) return
 
   try {
     await server.playground.unlink(vfsPath)
