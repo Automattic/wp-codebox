@@ -78,9 +78,16 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
   const pluginTarget = `/wordpress/wp-content/plugins/${pluginSlug}`
   const autoloadFile = options.autoloadFile ?? (options.bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const services = phpunitRuntimeServices(options.databaseType, options.services)
-  const extraPlugins = options.databaseType === "mdi-native"
-    ? [...normalizeExtraPlugins(options.extra_plugins), mdiNativePlugin()]
-    : normalizeExtraPlugins(options.extra_plugins)
+  const extraPlugins = normalizeExtraPlugins(options.extra_plugins)
+  if (options.databaseType === "mdi-native") {
+    const nativePlugin = nativeMdiPlugin(extraPlugins)
+    const nativeIndex = extraPlugins.findIndex((plugin) => plugin.slug === "markdown-database-integration")
+    if (nativeIndex === -1) {
+      extraPlugins.push(nativePlugin)
+    } else {
+      extraPlugins[nativeIndex] = nativePlugin
+    }
+  }
 
   return {
     schema: "wp-codebox/workspace-recipe/v1",
@@ -155,7 +162,28 @@ function phpunitDependencyPlugins(mounts: readonly string[], plugins: readonly W
   })
 }
 
-function mdiNativePlugin(): WorkspaceRecipeExtraPlugin {
+function nativeMdiPlugin(plugins: readonly WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeExtraPlugin {
+  const candidates = plugins.filter((plugin) => plugin.slug === "markdown-database-integration")
+  if (candidates.length > 1) {
+    throw new Error("mdi-native accepts at most one markdown-database-integration extra plugin source")
+  }
+  const candidate = candidates[0]
+  if (candidate) {
+    if (candidate.loadAs !== undefined && candidate.loadAs !== "plugin") {
+      throw new Error("mdi-native markdown-database-integration source must use loadAs=plugin")
+    }
+    return {
+      ...candidate,
+      slug: "markdown-database-integration",
+      pluginFile: "markdown-database-integration/markdown-database-integration.php",
+      activate: false,
+      metadata: {
+        ...candidate.metadata,
+        phase: "pre-install",
+        databaseDropIn: true,
+      },
+    }
+  }
   return {
     source: "wp-codebox:mdi-native",
     sha256: "b01d119e994c5c498373edcd2e3a62fcaec72bc8ad360f6c9a209341e1c5cc88",
@@ -297,6 +325,9 @@ function normalizeExtraPlugins(plugins: readonly WorkspaceRecipeExtraPlugin[] = 
     }
     if (plugin.composer !== undefined) {
       normalized.composer = plugin.composer
+    }
+    if (plugin.metadata !== undefined) {
+      normalized.metadata = plugin.metadata
     }
 
     return normalized
