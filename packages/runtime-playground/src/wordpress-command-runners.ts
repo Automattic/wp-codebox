@@ -1055,13 +1055,11 @@ export async function runPhpunitCommand({
     assertPlaygroundResponseOk("wordpress.phpunit", response)
   } catch (error) {
     const diagnostic = phpunitJunitCaptureDiagnostic(junitCapture)
-    if (diagnostic) {
-      throw attachPlaygroundDiagnostics(error, "wordpress.phpunit JUnit artifact", diagnostic)
-    }
     if (structured) {
-      throw attachPlaygroundDiagnostics(error, "wordpress.phpunit structured diagnostics", structured)
+      const structuredError = attachPlaygroundDiagnostics(error, "wordpress.phpunit structured diagnostics", structured)
+      throw diagnostic ? attachPlaygroundDiagnostics(structuredError, "wordpress.phpunit JUnit artifact", diagnostic) : structuredError
     }
-    throw error
+    throw diagnostic ? attachPlaygroundDiagnostics(error, "wordpress.phpunit JUnit artifact", diagnostic) : error
   }
 
   if (discoveryOnly) {
