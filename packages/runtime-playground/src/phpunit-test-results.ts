@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises"
+import { readdir, readFile, stat } from "node:fs/promises"
 import { join, relative } from "node:path"
 import type { ArtifactTestResults, ExecutionResult } from "@automattic/wp-codebox-core"
 
@@ -19,6 +19,7 @@ export interface PhpunitCompletedResult {
 export interface CapturedPhpunitCompletedResult {
   path: string
   result: PhpunitCompletedResult
+  junitPath?: string
 }
 
 export function parsePhpunitCompletedResult(log: string): PhpunitCompletedResult | undefined {
@@ -82,7 +83,11 @@ export async function readCapturedPhpunitCompletedResults(artifactRoot: string):
 
   for (const path of paths) {
     const result = parsePhpunitCompletedResult(await readFile(path, "utf8"))
-    if (result) results.push({ path: relative(artifactRoot, path), result })
+    if (result) {
+      const relativePath = relative(artifactRoot, path)
+      const junitPath = phpunitJunitPath(relativePath)
+      results.push({ path: relativePath, result, ...(await artifactFileExists(join(artifactRoot, junitPath)) ? { junitPath } : {}) })
+    }
   }
   return results
 }
@@ -92,12 +97,13 @@ export function buildPhpunitTestResults(commands: ExecutionResult[], completed: 
   const rawLogReferences = [
     { path: "commands.jsonl", kind: "commands-jsonl" },
     { path: "logs/commands.log", kind: "commands-log" },
-    ...completed.flatMap(({ path }) => [
+    ...completed.flatMap(({ path, junitPath }) => [
       { path, kind: "phpunit-result" },
       { path: phpunitDiagnosticPath(path), kind: "phpunit-output" },
+      ...(junitPath ? [{ path: junitPath, kind: "phpunit-junit" }] : []),
     ]),
   ]
-  const suites: ArtifactTestResults["suites"] = completed.map(({ path, result }, index) => ({
+  const suites: ArtifactTestResults["suites"] = completed.map(({ path, result, junitPath }, index) => ({
     name: completed.length === 1 ? "wordpress.phpunit" : `wordpress.phpunit:${index + 1}`,
     status: result.status,
     tests: result.total,
@@ -105,7 +111,7 @@ export function buildPhpunitTestResults(commands: ExecutionResult[], completed: 
     failed: result.failed,
     skipped: result.skipped,
     unknown: 0,
-    rawLogReferences: [{ path, kind: "phpunit-result" }, { path: phpunitDiagnosticPath(path), kind: "phpunit-output" }, { path: "logs/commands.log", kind: "commands-log" }],
+    rawLogReferences: [{ path, kind: "phpunit-result" }, { path: phpunitDiagnosticPath(path), kind: "phpunit-output" }, ...(junitPath ? [{ path: junitPath, kind: "phpunit-junit" }] : []), { path: "logs/commands.log", kind: "commands-log" }],
   }))
   for (let index = completed.length; index < phpunitCommands.length; index += 1) {
     suites.push({
@@ -177,4 +183,16 @@ function completedResult(total: number, assertions: number, failures: number, er
 
 export function phpunitDiagnosticPath(completedResultPath: string): string {
   return completedResultPath.replace(/\.wp-codebox-result\.txt$/, ".pg-test-result.txt")
+}
+
+export function phpunitJunitPath(completedResultPath: string): string {
+  return completedResultPath.replace(/\.wp-codebox-result\.txt$/, ".wp-codebox-junit.xml")
+}
+
+async function artifactFileExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile()
+  } catch {
+    return false
+  }
 }

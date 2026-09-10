@@ -53,7 +53,7 @@ import {
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs, splitLeadingStrictTypesDeclare } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, completedPlaygroundCommandError, playgroundCommandDiagnosticText, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
-import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic, readPluginPhpunitDiscoveryResult } from "./runtime-diagnostics.js"
+import { clearPluginPhpunitJunitResult, persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitJunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, phpunitJunitCaptureDiagnostic, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic, readPluginPhpunitDiscoveryResult } from "./runtime-diagnostics.js"
 import { phpunitExecutionSemantics, requiresManagedMultisitePreinstall } from "./phpunit-command-semantics.js"
 import { parsePhpunitOutput } from "./phpunit-test-results.js"
 import { runRuntimeExternalHttpLoad, waitForRuntimePreviewReady, type RuntimeExternalHttpLoadResult } from "./external-http-load.js"
@@ -939,6 +939,9 @@ export async function runPhpunitCommand({
   spec: ExecutionSpec
 }): Promise<string | RuntimeCommandResultEnvelope> {
   const args = spec.args ?? []
+  const processIdentity = boundedProcessIdentity(spec.processIdentity)
+  const junitFile = processIdentity ? `/tmp/wp-codebox-phpunit-junit-${processIdentity}.xml` : "/tmp/wp-codebox-phpunit-junit.xml"
+  await clearPluginPhpunitJunitResult(server, junitFile)
   const phpunitXmlArg = argValue(args, "phpunit-xml")
   const explicitCode = argValue(args, "code") || argValue(args, "code-file")
   const pluginSlug = argValue(args, "plugin-slug")?.trim() || ""
@@ -962,7 +965,6 @@ export async function runPhpunitCommand({
   }
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
-  const processIdentity = boundedProcessIdentity(spec.processIdentity)
   const managedMultisitePreinstalled = !explicitCode && !discoveryOnly && requiresManagedMultisitePreinstall(args, runtimeSpec)
   const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
   const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
@@ -1000,6 +1002,7 @@ export async function runPhpunitCommand({
     databaseType,
     managedMultisitePreinstalled,
     resultFile,
+    junitFile,
   })
   if (!explicitCode && !pluginSlug) {
     throw new Error("wordpress.phpunit requires plugin-slug=<slug> when code/code-file is not provided")
@@ -1020,13 +1023,17 @@ export async function runPhpunitCommand({
     }
     response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, bootstrapArgs, undefined, resultFile) })
   } catch (error) {
+    // Capture before the runtime teardown can reset the command VFS.
+    const junitCapture = await persistPluginPhpunitJunitResult(server, junitFile, artifactRoot, processIdentity)
     await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)
     await persistVfsDiagnosticFileToHost(server, resultFile, diagnosticHostFile, mounts)
     await captureCommandResultPaths(server, spec, artifactRoot)
     const completed = await readPluginPhpunitCompletedResult(server, resultFile) ?? parsePhpunitOutput(playgroundCommandDiagnosticText(error))
     if (completed) {
       await persistPluginPhpunitCompletedResult(artifactRoot, completed, processIdentity)
-      throw attachPlaygroundDiagnostics(completedPlaygroundCommandError("wordpress.phpunit", error), "wordpress.phpunit completed result", `completed ${completed.status}; total ${completed.total}; failed ${completed.failed}; skipped ${completed.skipped}; failures ${completed.failures}; errors ${completed.errors}`)
+      const completedError = attachPlaygroundDiagnostics(completedPlaygroundCommandError("wordpress.phpunit", error), "wordpress.phpunit completed result", `completed ${completed.status}; total ${completed.total}; failed ${completed.failed}; skipped ${completed.skipped}; failures ${completed.failures}; errors ${completed.errors}`)
+      const diagnostic = phpunitJunitCaptureDiagnostic(junitCapture)
+      throw diagnostic ? attachPlaygroundDiagnostics(completedError, "wordpress.phpunit JUnit artifact", diagnostic) : completedError
     }
     const structured = await readPluginPhpunitDiagnostic(server, resultFile)
     if (structured) {
@@ -1035,6 +1042,7 @@ export async function runPhpunitCommand({
     throw error
   }
 
+  const junitCapture = await persistPluginPhpunitJunitResult(server, junitFile, artifactRoot, processIdentity)
   await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)
   await persistVfsDiagnosticFileToHost(server, resultFile, diagnosticHostFile, mounts)
   const structured = await readPluginPhpunitDiagnostic(server, resultFile)
@@ -1046,10 +1054,12 @@ export async function runPhpunitCommand({
   try {
     assertPlaygroundResponseOk("wordpress.phpunit", response)
   } catch (error) {
+    const diagnostic = phpunitJunitCaptureDiagnostic(junitCapture)
     if (structured) {
-      throw attachPlaygroundDiagnostics(error, "wordpress.phpunit structured diagnostics", structured)
+      const structuredError = attachPlaygroundDiagnostics(error, "wordpress.phpunit structured diagnostics", structured)
+      throw diagnostic ? attachPlaygroundDiagnostics(structuredError, "wordpress.phpunit JUnit artifact", diagnostic) : structuredError
     }
-    throw error
+    throw diagnostic ? attachPlaygroundDiagnostics(error, "wordpress.phpunit JUnit artifact", diagnostic) : error
   }
 
   if (discoveryOnly) {

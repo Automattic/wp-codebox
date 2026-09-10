@@ -1,5 +1,5 @@
 import { basename, dirname, join } from "node:path"
-import { captureArtifactFile, type MountSpec } from "@automattic/wp-codebox-core"
+import { captureArtifactFile, DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, type CapturedArtifactFile, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { extractPhpunitFailureMessage } from "./playground-command-errors.js"
 import { PHPUNIT_COMPLETED_RESULT_PREFIX, parsePhpunitCompletedResult, type PhpunitCompletedResult } from "./phpunit-test-results.js"
@@ -15,6 +15,45 @@ export interface PhpunitDiscoveryResult {
 
 export async function persistPluginPhpunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string, namespace?: string): Promise<void> {
   await persistPhpunitResult(server, vfsPath, join(artifactRoot, "files", "phpunit", ...(namespace ? [namespace] : []), ".pg-test-result.txt"))
+}
+
+export async function clearPluginPhpunitJunitResult(server: PlaygroundCliServer, vfsPath: string): Promise<void> {
+  if (!server.playground?.unlink) return
+
+  try {
+    await server.playground.unlink(vfsPath)
+  } catch {
+    // A missing report is expected before the first PHPUnit command.
+  }
+}
+
+export async function persistPluginPhpunitJunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string, namespace?: string): Promise<CapturedArtifactFile> {
+  const artifactPath = join("files", "phpunit", ...(namespace ? [namespace] : []), ".wp-codebox-junit.xml")
+  if (!server.playground.readFileAsText) {
+    return { schema: "wp-codebox/captured-artifact-file/v1", status: "failed", path: artifactPath, reason: "runtime-read-unavailable" }
+  }
+
+  try {
+    // Playground exposes only whole-file reads; this caps retained host output, not VFS read allocation.
+    const contents = await server.playground.readFileAsText(vfsPath)
+    return await captureArtifactFile({
+      root: join(artifactRoot, "files", "phpunit", ...(namespace ? [namespace] : [])),
+      path: ".wp-codebox-junit.xml",
+      kind: "test-results",
+      contentType: "application/junit+xml",
+      contents,
+      maxBytes: 8 * DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES,
+      redaction: { policy: "applied", sensitive: true, reason: "PHPUnit JUnit failure details are redacted and bounded before private artifact capture." },
+      provenance: { source: "wordpress-playground", operation: "persist-phpunit-junit-result", id: vfsPath },
+    })
+  } catch {
+    return { schema: "wp-codebox/captured-artifact-file/v1", status: "failed", path: artifactPath, reason: "runtime-read-failed" }
+  }
+}
+
+export function phpunitJunitCaptureDiagnostic(capture: CapturedArtifactFile): string | undefined {
+  if (capture.status === "captured") return undefined
+  return `JUnit artifact capture ${capture.status}: ${capture.reason ?? "unknown"}.`
 }
 
 export async function persistPluginPhpunitCompletedResult(artifactRoot: string, result: PhpunitCompletedResult, namespace?: string): Promise<void> {

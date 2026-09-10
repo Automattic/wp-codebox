@@ -121,7 +121,7 @@ export function completedPlaygroundCommandError(command: string, cause: unknown)
   return new PlaygroundCommandError(command, {
     cause: commandCause,
     exitCode: playgroundNonzeroExitCode(commandCause) ?? playgroundNonzeroExitCode(cause) ?? 1,
-    errors: diagnostics.length > 0 ? diagnostics.join("\n") : errorMessage(commandCause),
+    errors: diagnostics.length > 0 ? diagnostics.join("\n") : truncateDiagnostic(redactDiagnosticText(errorMessage(commandCause))) ?? "Playground command failed without diagnostics.",
     text: "",
   })
 }
