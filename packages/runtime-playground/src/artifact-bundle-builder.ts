@@ -266,7 +266,10 @@ export class ArtifactBundleBuilder {
       ...source.browserManifestFiles(),
       ...source.observationManifestFiles(),
       ...commandArtifactManifestFiles(source.artifactRoot, source.commands),
-      ...phpunitCompletedResults.map(({ path }) => artifactManifestFile(join(source.artifactRoot, path), "test-results", "text/plain")),
+      ...phpunitCompletedResults.flatMap(({ path, junitPath }) => [
+        artifactManifestFile(join(source.artifactRoot, path), "test-results", "text/plain"),
+        ...(junitPath ? [artifactManifestFile(join(source.artifactRoot, junitPath), "test-results", "application/junit+xml")] : []),
+      ]),
       ...source.pluginCheckManifestFiles(),
       ...source.themeCheckManifestFiles(),
       ...runtimeSnapshotFiles,

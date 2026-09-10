@@ -31,6 +31,8 @@ export interface PhpunitRunCodeOptions {
    * die() or exit().
    */
   resultFile?: string
+  /** Private JUnit report captured after PHPUnit finishes, including failures. */
+  junitFile?: string
 }
 
 export type PhpunitMultisitePreinstallCodeOptions = Pick<PhpunitRunCodeOptions, "testsDir" | "env" | "wpConfigDefines" | "databaseType" | "resultFile">
@@ -328,6 +330,8 @@ function phpunitArgsPhp(functionName: string, logFunction: string): string {
 
 function ${functionName}(array $argv) {
     $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'cacheResult' => false, 'cacheResultFile' => ${functionName}_private_cache_result_file(), 'extensions' => array());
+    global $junit_file;
+    $arguments['junitLogfile'] = $junit_file;
     $selected_testsuites = array();
     $args = array_slice($argv, 1);
     for ($i = 0; $i < count($args); $i++) {
@@ -524,6 +528,7 @@ $plugin_slug = ${JSON.stringify(options.pluginSlug)};
 $plugin_path = '/wordpress/wp-content/plugins/' . $plugin_slug;
 $runtime_cwd = ${JSON.stringify(options.cwd || `/wordpress/wp-content/plugins/${options.pluginSlug}`)};
 $result_file = ${JSON.stringify(options.resultFile ?? PLUGIN_PHPUNIT_RESULT_FILE)};
+$junit_file = ${JSON.stringify(options.junitFile ?? "/tmp/wp-codebox-phpunit-junit.xml")};
 $current_stage = 'preboot';
 $pg_stage_output_buffering = false;
 $autoload_file = ${JSON.stringify(options.autoloadFile)};

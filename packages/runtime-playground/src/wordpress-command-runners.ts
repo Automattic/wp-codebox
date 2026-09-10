@@ -53,7 +53,7 @@ import {
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs, splitLeadingStrictTypesDeclare } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, completedPlaygroundCommandError, playgroundCommandDiagnosticText, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
-import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic, readPluginPhpunitDiscoveryResult } from "./runtime-diagnostics.js"
+import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitJunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic, readPluginPhpunitDiscoveryResult } from "./runtime-diagnostics.js"
 import { phpunitExecutionSemantics, requiresManagedMultisitePreinstall } from "./phpunit-command-semantics.js"
 import { parsePhpunitOutput } from "./phpunit-test-results.js"
 import { runRuntimeExternalHttpLoad, waitForRuntimePreviewReady, type RuntimeExternalHttpLoadResult } from "./external-http-load.js"
@@ -965,6 +965,7 @@ export async function runPhpunitCommand({
   const processIdentity = boundedProcessIdentity(spec.processIdentity)
   const managedMultisitePreinstalled = !explicitCode && !discoveryOnly && requiresManagedMultisitePreinstall(args, runtimeSpec)
   const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
+  const junitFile = processIdentity ? `/tmp/wp-codebox-phpunit-junit-${processIdentity}.xml` : "/tmp/wp-codebox-phpunit-junit.xml"
   const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit", false) : phpunitRunCode({
     pluginSlug,
@@ -1000,6 +1001,7 @@ export async function runPhpunitCommand({
     databaseType,
     managedMultisitePreinstalled,
     resultFile,
+    junitFile,
   })
   if (!explicitCode && !pluginSlug) {
     throw new Error("wordpress.phpunit requires plugin-slug=<slug> when code/code-file is not provided")
@@ -1020,6 +1022,8 @@ export async function runPhpunitCommand({
     }
     response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, bootstrapArgs, undefined, resultFile) })
   } catch (error) {
+    // Capture before the runtime teardown can reset the command VFS.
+    await persistPluginPhpunitJunitResult(server, junitFile, artifactRoot, processIdentity)
     await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)
     await persistVfsDiagnosticFileToHost(server, resultFile, diagnosticHostFile, mounts)
     await captureCommandResultPaths(server, spec, artifactRoot)
@@ -1035,6 +1039,7 @@ export async function runPhpunitCommand({
     throw error
   }
 
+  await persistPluginPhpunitJunitResult(server, junitFile, artifactRoot, processIdentity)
   await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)
   await persistVfsDiagnosticFileToHost(server, resultFile, diagnosticHostFile, mounts)
   const structured = await readPluginPhpunitDiagnostic(server, resultFile)

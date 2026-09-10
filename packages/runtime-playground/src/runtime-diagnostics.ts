@@ -1,5 +1,5 @@
 import { basename, dirname, join } from "node:path"
-import { captureArtifactFile, type MountSpec } from "@automattic/wp-codebox-core"
+import { captureArtifactFile, DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, type CapturedArtifactFile, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { extractPhpunitFailureMessage } from "./playground-command-errors.js"
 import { PHPUNIT_COMPLETED_RESULT_PREFIX, parsePhpunitCompletedResult, type PhpunitCompletedResult } from "./phpunit-test-results.js"
@@ -15,6 +15,26 @@ export interface PhpunitDiscoveryResult {
 
 export async function persistPluginPhpunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string, namespace?: string): Promise<void> {
   await persistPhpunitResult(server, vfsPath, join(artifactRoot, "files", "phpunit", ...(namespace ? [namespace] : []), ".pg-test-result.txt"))
+}
+
+export async function persistPluginPhpunitJunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string, namespace?: string): Promise<CapturedArtifactFile | undefined> {
+  if (!server.playground.readFileAsText) return undefined
+
+  try {
+    const contents = await server.playground.readFileAsText(vfsPath)
+    return await captureArtifactFile({
+      root: join(artifactRoot, "files", "phpunit", ...(namespace ? [namespace] : [])),
+      path: ".wp-codebox-junit.xml",
+      kind: "test-results",
+      contentType: "application/junit+xml",
+      contents,
+      maxBytes: 8 * DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES,
+      redaction: { policy: "applied", sensitive: true, reason: "PHPUnit JUnit failure details are redacted and bounded before private artifact capture." },
+      provenance: { source: "wordpress-playground", operation: "persist-phpunit-junit-result", id: vfsPath },
+    })
+  } catch {
+    return undefined
+  }
 }
 
 export async function persistPluginPhpunitCompletedResult(artifactRoot: string, result: PhpunitCompletedResult, namespace?: string): Promise<void> {
