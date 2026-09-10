@@ -15,3 +15,5 @@ scripts/uploads/
 # Disposable local Cloudflare/Miniflare state and Python bytecode.
 packages/runtime-cloudflare/.bricks-local-state-*/
 packages/runtime-cloudflare/scripts/__pycache__/
+# Generated local native API credentials/config; export only compact receipts.
+packages/runtime-cloudflare/outputs/native-api-prepared*/

@@ -86,3 +86,39 @@ For explicitly authorized remote transport evidence, run `npm run remote-gate:pr
 5. Run `npm run local-gate` and `npm run local-gate:d1` for the isolated workerd workflow through both coordinator implementations. Each gate generates and provisions all artifacts, verifies the selected backend through the state envelope, injects stable test-only admin-password, auth-secret, and operator-token values, uploads and activates a real plugin ZIP, establishes an anonymous homepage and canonical-permalink publication, and updates a published post through authenticated REST without immediate rendering. The D1 profile proves queue-driven publication before restarting the local process, then proves the immutable R2 result survives restart; local Wrangler queues themselves are process-local rather than a durability substitute for deployed Cloudflare Queues. Wrangler's scheduled-test facade suppresses local queue consumers, so the D1 gate temporarily restarts against the same persisted state for scheduled WordPress cron assertions and returns to normal queue mode for import execution. The coordinator-only Durable Object profile proves the updated canonical state through authenticated REST while preserving its previous immutable publication. Both prove bounded scheduled WordPress cron, coordinator-free R2 reads, and canonical state across restart. A final two-host phase proves isolated mutations, coordinator versions, REST collections, credentials, publications, and caches plus fail-closed unknown-host routing. The remaining coverage includes login, concurrent canonical writes, media, representative frontend/admin/editor assets, PHP diagnostics, session recovery, and a fresh login after restart.
 
 This document describes local candidate verification only. It does not claim remote deployment.
+
+
+## Native Bricks API proof of concept
+
+The authenticated native routes are `PUT /v1/bricks/artifacts/{sha256}`, `POST /v1/bricks/sites`, and `POST /v1/bricks/sites/{siteId}/revisions|restores`. Poll through `GET /v1/sites/{siteId}/operations/{operationId}`. They accept the Build native contract, preserve source/artifact hashes, serialize mutations through the existing D1 lease/CAS, reject stale exact bases, and return immutable operation receipts. Restore creates a new monotonic canonical revision containing the retained target content.
+
+Provision initializes native documents on an **operator-prepared empty allocation** declared in `WORDPRESS_BRICKS_PREPARED_ALLOCATIONS` and `WORDPRESS_SITE_CONTEXTS`. It does not allocate Cloudflare resources or install Bricks inside a Worker request. Missing preparation returns `native_allocation_unprepared`. The route uses real Bricks vendor authoring and ownership APIs for native pages, templates, classes, variables, palettes and Theme Styles, plus WordPress media APIs. Stable external IDs are mapped consistently to Bricks six-character IDs. A template type change requires a new logical document ID.
+
+Prepare a fresh local state from a retained Miniflare runtime fixture and the authorized Bricks ZIP:
+
+```sh
+python3 scripts/prepare-native-bricks-allocation.py \
+  --source-state .bricks-local-state-SOURCE \
+  --destination-state .bricks-local-state-native-api-NEW \
+  --output outputs/native-api-prepared-NEW \
+  --runtime-zip /absolute/path/bricks.zip --runtime-version 2.4-rc --port 8812
+npx wrangler dev --config outputs/native-api-prepared-NEW/wrangler.jsonc \
+  --persist-to .bricks-local-state-native-api-NEW --port 8812 --local
+```
+
+The preparation script copies generic runtime objects, extracts all Bricks files from the supplied ZIP, seeds fresh WordPress credentials, omits prior customer documents/media/design, and creates only local files. Generated `.dev.vars`, `secrets.json`, and `credentials.json` remain private and ignored. `--site-id` and `--origin` prepare a separate namespace for an operator-controlled remote export; the script never deploys or writes remote state.
+
+In a second terminal, run the actual Build producer/writer against the runtime:
+
+```sh
+NATIVE_API_ORIGIN=http://127.0.0.1:8812 npx tsx scripts/native-bricks-build-interop.mts \
+  outputs/native-api-prepared-NEW /absolute/path/to/Build/source
+```
+
+Stop and restart Wrangler against the retained state, then capture cold receipt/render evidence:
+
+```sh
+node scripts/native-bricks-cold-reopen.mjs outputs/native-api-prepared-NEW /absolute/evidence/directory
+```
+
+Local evidence is retained in `../../outputs/bricks-native-api-local-rehearsal`. Draft receipts explicitly carry no licensed visual-editor or client-role acceptance evidence. The native target must remain disabled for customer production until the separate licensed remote canary and Build release gates pass.

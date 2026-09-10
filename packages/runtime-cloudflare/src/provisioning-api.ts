@@ -422,3 +422,6 @@ async function claimCapability(root: string, allocation: ProvisioningAllocation)
   const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(identity))
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
+
+// Native runtime admission shares the same principal credentials and scopes.
+export { authenticate as authenticateProvisioningRequest, allowed as provisioningTokenAllowsSite, idempotencyKey as provisioningIdempotencyKey }

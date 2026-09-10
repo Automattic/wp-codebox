@@ -1,3 +1,7 @@
+import { patchSqliteDeleteAlias } from "./sqlite-delete-alias-compatibility.js"
+import { routeNativeBricksApi, type NativeMutation, type NativeExecution, type NativePointer } from "./native-bricks-api.js"
+import { NATIVE_BRICKS_APPLY_PHP } from "./native-bricks-php.js"
+import { stableJson, type NativeBricksArtifact } from "./native-bricks-artifact.js"
 import { loadPHPRuntime, PHP, type PHPRequestHandler, type PHPResponseData } from "@php-wasm/universal"
 import { patchBricksRandomIds, restoreBricksSettings } from "./bricks-clock-compatibility.js"
 import { decodeZip } from "@php-wasm/stream-compression"
@@ -228,6 +232,9 @@ update_option('wp_codebox_static_artifact_imports', $records, false);
 $GLOBALS['wpdb']->flush_canonical_writes();
 echo wp_json_encode(array_merge(array('status' => 'imported'), $record), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);`
 export interface RuntimeEnv {
+  WORDPRESS_BRICKS_PREPARED_ALLOCATIONS?: string
+  WORDPRESS_NATIVE_DEPLOYMENT_VERSION?: string
+  WORDPRESS_VERSION_METADATA?: { id: string }
   WORDPRESS_STATE_BUCKET: R2Bucket
   WORDPRESS_SITE_CONTEXTS?: string
   WORDPRESS_PREVIEW_DOMAIN?: string
@@ -307,6 +314,12 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       if (new URL(request.url).pathname === "/v1" || new URL(request.url).pathname.startsWith("/v1/")) {
         const operations = resolveOperations?.(env)
         if (!operations || !("WORDPRESS_STATE_DATABASE" in env)) return Response.json({ schema: "wp-codebox/provisioning-api/v1", error: { code: "not_found", message: "The API resource is unavailable." } }, { status: 404 })
+        await operations.initialize()
+        const native = await routeNativeBricksApi(request, env as Env & { WORDPRESS_STATE_DATABASE: D1Database }, {
+          coordinator: site => resolveCoordinator(env, site),
+          execute: (site, input, artifact, lease, prepare) => runNativeBricksMutation(env, site, input, artifact, lease, prepare),
+        })
+        if (native) return native
         return routeProvisioningApi(request, env as Env & { WORDPRESS_STATE_DATABASE: D1Database }, operations)
       }
       let site: SiteContext
@@ -2622,6 +2635,8 @@ async function bootWordPressRuntime(
   })
   const requestHandler = trace ? await trace.measureComposite("playground.opaque", boot) : await boot()
   const php = await requestHandler.getPrimaryPhp()
+  const sqliteDriverPath = "/internal/shared/sqlite-database-integration/wp-includes/database/sqlite/class-wp-pdo-mysql-on-sqlite.php"
+  if (php.fileExists(sqliteDriverPath)) php.writeFile(sqliteDriverPath, new TextEncoder().encode(patchSqliteDeleteAlias(php.readFileAsText(sqliteDriverPath))))
   const wordpressVersion = (trace ? await trace.measure("playground.version.read", () => php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })) : await php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })).text.trim()
   if (!wordpressVersion) throw new Error("WordPress boot completed without a detected version.")
   return { php, requestHandler, wordpressVersion }
@@ -3414,4 +3429,70 @@ function instantiatePrecompiledWasm(module: WebAssembly.Module) {
 
 function probeResponse(phase: string, evidence: Record<string, number | string>): Response {
   return Response.json({ schema: "wp-codebox/cloudflare-boot-probe/v1", phase, completed: true, evidence })
+}
+
+async function runNativeBricksMutation(env: RuntimeEnv, site: SiteContext, input: NativeMutation, artifact: NativeBricksArtifact | null, lease: RevisionLease, prepare: (result: NativeExecution) => Promise<void>): Promise<NativeExecution> {
+  if (!lease.pointer) throw new Error("Native mutation requires an operator-prepared allocation.")
+  const start = Date.now()
+  const restoredFrom = input.authority.restoreTarget
+  const source = restoredFrom ? { revision: restoredFrom.canonical_state_revision, manifestKey: restoredFrom.canonical_manifest_key, persistedAt: restoredFrom.canonical_persisted_at } : lease.pointer
+  let runtime: Runtime | undefined = await bootRuntime(env.WORDPRESS_STATE_BUCKET, source, site.origin, await canonicalWordPressAuthConstants(env, site), false, site)
+  try {
+    runtime.php.writeFile("/tmp/native-bricks-input.json", new TextEncoder().encode(JSON.stringify({ action: restoredFrom ? "restore-read" : input.action, artifact })))
+    runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
+    initializePublicationChanges(runtime.php)
+    const response = await runtime.php.run({ code: NATIVE_BRICKS_APPLY_PHP })
+    let observed: { native_records: { page_ids: number[]; template_ids: number[]; media_ids: number[] }; native_document_hashes: string[]; design_system_version: string; peak_php_bytes: number }
+    try { observed = JSON.parse(response.text) } catch { throw new Error("Native execution did not produce a clean JSON observation.") }
+    if (!observed.native_document_hashes?.length || observed.native_document_hashes.some(hash => !/^[a-f0-9]{64}$/.test(hash))) throw new Error("Native execution did not return document digests.")
+    let pointer: MarkdownPointer
+    if (restoredFrom) {
+      if (stableJson(observed.native_document_hashes) !== stableJson(restoredFrom.native_document_hashes) || observed.design_system_version !== restoredFrom.design_system_version) throw new Error("Retained native restore content differs from its exact receipt.")
+      const manifest = await readMarkdownManifest(env.WORDPRESS_STATE_BUCKET, source, site)
+      if (!manifest) throw new Error("Retained restore manifest is unavailable.")
+      await disposeRequestHandler(runtime.requestHandler); runtime = undefined
+      // New immutable revision, same restored content. The coordinator never rewinds.
+      pointer = await persistMarkdownManifest(env.WORDPRESS_STATE_BUCKET, manifest.files, site, manifest.uploads ?? [], manifest.wpContent ?? [], manifest.wpContentDeleted ?? [])
+    } else {
+      pointer = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, readCanonicalChanges(runtime.php), site)
+      await disposeRequestHandler(runtime.requestHandler); runtime = undefined
+    }
+    const revision: NativePointer = {
+      receipt_id: `native_${crypto.randomUUID().replace(/-/g, "")}`,
+      canonical_state_version: lease.version + 1,
+      canonical_state_revision: pointer.revision,
+      canonical_manifest_key: pointer.manifestKey,
+      canonical_persisted_at: pointer.persistedAt,
+      artifact_sha256: restoredFrom?.artifact_sha256 ?? input.artifact!.sha256,
+      native_document_hashes: observed.native_document_hashes,
+      design_system_version: observed.design_system_version,
+    }
+    const measurements = JSON.stringify({ schema: "wp-codebox/native-bricks-resource-observation/v1", operation_id: input.operationId, wall_ms: Date.now() - start, peak_php_bytes: observed.peak_php_bytes, unmeasured: ["worker_cpu_ms", "peak_isolate_bytes", "d1_reads_writes", "r2_operations", "subrequests"] })
+    const measurementsHash = await sha256Hex(new TextEncoder().encode(measurements))
+    await putImmutableJson(env.WORDPRESS_STATE_BUCKET, `${siteStorageKeys(site).root}/native-evidence/${measurementsHash}.json`, measurements)
+    const empty = { receipt_id: null, canonical_state_version: null, canonical_state_revision: null, canonical_manifest_key: null, canonical_persisted_at: null, artifact_sha256: null, native_document_hashes: null, design_system_version: null }
+    const restoreReceiptId = restoredFrom ? `restore_${crypto.randomUUID().replace(/-/g, "")}` : null
+    const receipt = {
+      schema_version: 1, target_runtime: "wordpress_bricks_cloudflare_v1", action: input.action, operation_id: input.operationId, target_request_sha256: await sha256Hex(new TextEncoder().encode(stableJson(input.targetRequest))), site_id: site.id, customer_id: input.customerId,
+      state: "draft", site_allocation: { allocation_id: site.id, canonical_state_revision: pointer.revision },
+      native_records: observed.native_records, native_document_hashes: observed.native_document_hashes, design_system_version: observed.design_system_version,
+      bricks_artifact_sha256: input.targetRequest.bricks_artifact.sha256, dossier_hash: input.targetRequest.dossier.sha256,
+      creative_provenance: input.targetRequest.creative_provenance, authorized_asset_hashes: input.targetRequest.authorized_assets.map((asset: {sha256:string}) => asset.sha256),
+      target_role: { ...input.targetRequest.editing.target_role, editability_verified: false },
+      acceptance_sequence: input.targetRequest.editing.acceptance_sequence,
+      protected_preview: { state: "requested", url: null },
+      acceptance_results: input.targetRequest.editing.acceptance_sequence.map((step: string) => ({ step, status: "not_run", evidence_sha256: null })),
+      acceptance_transaction_sha256: null,
+      deployment: { version: env.WORDPRESS_VERSION_METADATA?.id ?? env.WORDPRESS_NATIVE_DEPLOYMENT_VERSION ?? "unreported-runtime-version", runtime_artifact_version: input.targetRequest.runtime_artifact.version, runtime_artifact_sha256: input.targetRequest.runtime_artifact.sha256, artifact_hashes: [input.targetRequest.runtime_artifact.sha256, revision.artifact_sha256] },
+      evidence: { desktop_sha256: null, mobile_sha256: null, client_edit_transaction_sha256: null, resource_measurements_sha256: measurementsHash },
+      revision_receipt: revision, rollback_receipt: { ...(input.authority.expectedBase ?? empty) },
+      restoration: restoredFrom ? { restore_receipt_id: restoreReceiptId, restored_from: restoredFrom, pre_restore_base: input.authority.expectedBase } : null,
+    }
+    const result = { pointer, receipt }
+    await prepare(result)
+    return result
+  } finally {
+    if (runtime) await disposeRequestHandler(runtime.requestHandler)
+    await discardCachedRuntime(site.id)
+  }
 }

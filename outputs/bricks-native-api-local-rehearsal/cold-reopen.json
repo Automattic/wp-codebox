@@ -1,0 +1,62 @@
+{
+  "status": "cold-native-receipt-and-public-render-passed",
+  "origin": "http://127.0.0.1:8812",
+  "restored_revision": {
+    "receipt_id": "native_034982672dcf4ec899496b92fc5c3da8",
+    "canonical_state_version": 4,
+    "canonical_state_revision": "d207bbb4-18f3-489b-820d-c1271fe14129",
+    "canonical_manifest_key": "sites/default/markdown/revisions/d207bbb4-18f3-489b-820d-c1271fe14129.json",
+    "canonical_persisted_at": "2026-09-10T18:50:09.925Z",
+    "artifact_sha256": "b916dfffb1a57060f939af43ba77069a0d33dbe584535fddd8de35596c2e33fb",
+    "native_document_hashes": [
+      "cc42b781c2c2b32c78acd4e758a8c74fd955880cd84689c4a6f0c49edf970a01",
+      "85c48820d25bbe844b4e0dbc90b76b09bd891c48071169704b76748b8ec33c18",
+      "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+      "b93203b5ad218393a954a9f15a1829628d9a2f433ce060e9b1ad120a6ebd5776"
+    ],
+    "design_system_version": "design-system-1"
+  },
+  "observations": [
+    {
+      "viewport": "desktop",
+      "status": 200,
+      "heading": "A brighter home",
+      "nativeElements": 19,
+      "images": [
+        {
+          "src": "http://127.0.0.1:8812/wp-content/uploads/2026/09/bright-kind.png",
+          "loaded": true,
+          "width": 1
+        },
+        {
+          "src": "http://127.0.0.1:8812/wp-content/uploads/2026/09/bright-kind.png",
+          "loaded": true,
+          "width": 1
+        }
+      ],
+      "overflow": false,
+      "screenshot_sha256": "178aff9e141fedc73031db6afa9f86ae12abc62484a69364251276c85c42af7f"
+    },
+    {
+      "viewport": "mobile",
+      "status": 200,
+      "heading": "A brighter home",
+      "nativeElements": 19,
+      "images": [
+        {
+          "src": "http://127.0.0.1:8812/wp-content/uploads/2026/09/bright-kind.png",
+          "loaded": true,
+          "width": 1
+        },
+        {
+          "src": "http://127.0.0.1:8812/wp-content/uploads/2026/09/bright-kind.png",
+          "loaded": true,
+          "width": 1
+        }
+      ],
+      "overflow": false,
+      "screenshot_sha256": "48ba45100bcf35061938707ad430093f425d506b5037ce637472ef0baff8ff4a"
+    }
+  ],
+  "qualification": "Programmatic native API proof only; licensed visual editor not run."
+}
