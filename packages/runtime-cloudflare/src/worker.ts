@@ -1,4 +1,4 @@
-import { routeNativeBricksPreview, isProtectedNativeSite } from "./bricks-preview.js"
+import { routeNativeBricksPreview, isProtectedNativeSite, nativePreviewReceipt } from "./bricks-preview.js"
 import { patchSqliteDeleteAlias } from "./sqlite-delete-alias-compatibility.js"
 import { routeNativeBricksApi, type NativeMutation, type NativeExecution, type NativePointer } from "./native-bricks-api.js"
 import { NATIVE_BRICKS_APPLY_PHP } from "./native-bricks-php.js"
@@ -1647,7 +1647,7 @@ async function disposeRequestHandler(requestHandler: PHPRequestHandler): Promise
   await dispose.call(requestHandler)
 }
 
-async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<string, string>, includeWebsiteImporter = false, site: SiteContext = DEFAULT_SITE_CONTEXT, trace?: CloudflarePhaseTrace, checkpoint?: (stage: string) => Promise<void>): Promise<Runtime> {
+async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<string, string>, includeWebsiteImporter = false, site: SiteContext = DEFAULT_SITE_CONTEXT, trace?: CloudflarePhaseTrace, checkpoint?: (stage: string) => Promise<void>, nativeRuntime = false): Promise<Runtime> {
   // Reading the bounded, server-required revision before constructing PHP
   // measured about 8 MiB lower at Bricks init than fetching each object from
   // inside the live PHP hook. bootWordPressRuntime severs these arrays after
@@ -1658,7 +1658,7 @@ async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: s
   // Hydrate the integrity-checked canonical uploads even though browser assets
   // are served from R2. Persistence inventories MEMFS, so omitting these files
   // would also turn an unrelated save into deletion of every existing upload.
-  const booted = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads, revision.wpContent, revision.wpContentDeleted, includeWebsiteImporter, trace, revision.wpContentR2OnlyPaths)
+  const booted = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads, revision.wpContent, revision.wpContentDeleted, includeWebsiteImporter, trace, revision.wpContentR2OnlyPaths, undefined, nativeRuntime)
   revision.markdown = []
   revision.uploads = []
   revision.wpContent = []
@@ -2590,6 +2590,7 @@ async function bootWordPressRuntime(
   trace?: CloudflarePhaseTrace,
   r2OnlyWpContentPaths: string[] = [],
   canonicalHydration?: CanonicalHydrationPlan,
+  disableOpcodeCache = false,
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   if (includeSqlite && !runtimeBucket) throw new Error("SQLite integration artifact requires WORDPRESS_STATE_BUCKET.")
   validateWpContentDeletedPaths(wpContentDeleted, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
@@ -2597,6 +2598,9 @@ async function bootWordPressRuntime(
   const websiteImporterZip = includeWebsiteImporter ? trace ? await trace.measure("runtime.archive.component.fetch-verify", () => readWebsiteImporterArtifact(runtimeBucket!)) : await readWebsiteImporterArtifact(runtimeBucket!) : undefined
   const boot = () => bootWordPressAndRequestHandler({
     createPhpRuntime: trace ? () => trace.measure("php.runtime.create", () => createPhpRuntime()) : createPhpRuntime,
+    // Avoid OPCache file-cache memory overhead in reconstructed native runtimes.
+    // The complete PHP/WordPress execution remains enabled.
+    phpIniEntries: disableOpcodeCache ? { "opcache.enable": "0", "opcache.enable_cli": "0", "opcache.file_cache": "" } : undefined,
     constants: {
       AUTOMATIC_UPDATER_DISABLED: true,
       CONCATENATE_SCRIPTS: false,
@@ -3489,7 +3493,7 @@ async function runNativeBricksMutation(env: RuntimeEnv, site: SiteContext, input
     await env.WORDPRESS_STATE_BUCKET.put(`${siteStorageKeys(site).root}/native-diagnostics/${input.operationId}.json`, JSON.stringify({ stage, operation_id: input.operationId, deployment_version: env.WORDPRESS_VERSION_METADATA?.id ?? env.WORDPRESS_NATIVE_DEPLOYMENT_VERSION ?? null, wall_ms: Date.now() - start }), { httpMetadata: { contentType: "application/json" } })
   }
   await checkpoint("boot-started")
-  let runtime: Runtime | undefined = await bootRuntime(env.WORDPRESS_STATE_BUCKET, source, site.origin, await canonicalWordPressAuthConstants(env, site), false, site, undefined, checkpoint)
+  let runtime: Runtime | undefined = await bootRuntime(env.WORDPRESS_STATE_BUCKET, source, site.origin, await canonicalWordPressAuthConstants(env, site), false, site, undefined, checkpoint, true)
   try {
     runtime.php.writeFile("/tmp/native-bricks-input.json", new TextEncoder().encode(JSON.stringify({ action: restoredFrom ? "restore-read" : input.action, artifact })))
     runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
@@ -3530,15 +3534,16 @@ async function runNativeBricksMutation(env: RuntimeEnv, site: SiteContext, input
     await putImmutableJson(env.WORDPRESS_STATE_BUCKET, `${siteStorageKeys(site).root}/native-evidence/${measurementsHash}.json`, measurements)
     const empty = { receipt_id: null, canonical_state_version: null, canonical_state_revision: null, canonical_manifest_key: null, canonical_persisted_at: null, artifact_sha256: null, native_document_hashes: null, design_system_version: null }
     const restoreReceiptId = restoredFrom ? `restore_${crypto.randomUUID().replace(/-/g, "")}` : null
+    const preview = nativePreviewReceipt(site, revision.receipt_id, site.origin)
     const receipt = {
       schema_version: 1, target_runtime: "wordpress_bricks_cloudflare_v1", action: input.action, operation_id: input.operationId, target_request_sha256: await sha256Hex(new TextEncoder().encode(stableJson(input.targetRequest))), site_id: site.id, customer_id: input.customerId,
-      state: "draft", site_allocation: { allocation_id: site.id, canonical_state_revision: pointer.revision },
+      state: preview.state === "ready" ? "protected_preview" : "draft", site_allocation: { allocation_id: site.id, canonical_state_revision: pointer.revision },
       native_records: observed.native_records, native_document_hashes: observed.native_document_hashes, design_system_version: observed.design_system_version,
       bricks_artifact_sha256: input.targetRequest.bricks_artifact.sha256, dossier_hash: input.targetRequest.dossier.sha256,
       creative_provenance: input.targetRequest.creative_provenance, authorized_asset_hashes: input.targetRequest.authorized_assets.map((asset: {sha256:string}) => asset.sha256),
       target_role: { ...input.targetRequest.editing.target_role, editability_verified: false },
       acceptance_sequence: input.targetRequest.editing.acceptance_sequence,
-      protected_preview: { state: "requested", url: null },
+      protected_preview: preview,
       acceptance_results: input.targetRequest.editing.acceptance_sequence.map((step: string) => ({ step, status: "not_run", evidence_sha256: null })),
       acceptance_transaction_sha256: null,
       deployment: { version: env.WORDPRESS_VERSION_METADATA?.id ?? env.WORDPRESS_NATIVE_DEPLOYMENT_VERSION ?? "unreported-runtime-version", runtime_artifact_version: input.targetRequest.runtime_artifact.version, runtime_artifact_sha256: input.targetRequest.runtime_artifact.sha256, artifact_hashes: [input.targetRequest.runtime_artifact.sha256, revision.artifact_sha256] },
@@ -3564,7 +3569,10 @@ async function renderNativeBricksPreview(request: Request, env: RuntimeEnv, site
     ?? await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)
   if (asset) return asset
   if (/^\/wp-(?:content|includes)\//.test(new URL(request.url).pathname)) return new Response("Native preview asset not found.", { status: 404 })
-  const runtime = await bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, site.origin, await canonicalWordPressAuthConstants(env, site), false, site)
-  try { return toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request))) }
-  finally { await disposeRequestHandler(runtime.requestHandler) }
+  const startedAt = Date.now()
+  const checkpoint = async (stage: string) => { await env.WORDPRESS_STATE_BUCKET.put(`${siteStorageKeys(site).root}/native-diagnostics/preview.json`, JSON.stringify({ stage, revision: pointer.revision, deployment_version: env.WORDPRESS_VERSION_METADATA?.id ?? null, wall_ms: Date.now() - startedAt })) }
+  await checkpoint("preview-started")
+  const runtime = await bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, site.origin, await canonicalWordPressAuthConstants(env, site), false, site, undefined, checkpoint, true)
+  try { const response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request))); await checkpoint("preview-rendered"); return response }
+  finally { await disposeRequestHandler(runtime.requestHandler); await checkpoint("preview-disposed") }
 }

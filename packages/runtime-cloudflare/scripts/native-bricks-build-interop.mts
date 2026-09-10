@@ -47,10 +47,16 @@ async function run(action:string,artifact:any,base:any=null,target:any=null){
  if(JSON.stringify(result)!==JSON.stringify(replay))throw new Error('Replay changed terminal operation');
  const polled=await writer.readOperation(action,input);
  if(JSON.stringify(result)!==JSON.stringify(polled))throw new Error('Poll changed terminal operation');
- const html=await fetch(origin+'/').then(response=>response.text());
+ const receipt=result.operation.receipt;
+ const previewUrl=receipt.protected_preview.url ?? (siteId==='default'?origin+'/':`${origin}/v1/bricks/sites/${siteId}/previews/${receipt.revision_receipt.receipt_id}/`);
+ const previewPath=new URL(previewUrl);
+ const rendered=await fetch(origin+previewPath.pathname+previewPath.search,{headers:{authorization:`Bearer ${credentials.apiToken}`}});
+ const html=await rendered.text();
+ await writeFile(`${directory}/last-render.json`,JSON.stringify({action,url:previewUrl,status:rendered.status,headers:Object.fromEntries(rendered.headers),body:html.slice(0,12000)},null,2));
+ if(!rendered.ok)throw new Error(`Actual protected native render returned ${rendered.status}`);
  const heading=action==='revise'?'Native API revised heading':'A brighter home';
  if(!html.includes(heading))throw new Error('Actual public native render omitted expected heading');
- results.push({action,request:input,operation:result.operation,public_heading_observed:heading,idempotent_replay:true,poll_verified:true});
+ results.push({action,request:input,operation:result.operation,public_heading_observed:heading,preview_url:previewUrl,idempotent_replay:true,poll_verified:true});
  await writeFile(`${directory}/build-interop-progress.json`,JSON.stringify({buildCommit,origin,results},null,2));
  console.log(JSON.stringify({action,state:result.operation.state,version:result.operation.receipt.revision_receipt.canonical_state_version}));
  return result.operation.receipt;
@@ -62,5 +68,5 @@ let staleRejected=false;
 try {await writer.revise(request('revise',first,provisioned.revision_receipt,null,'stale'),first);}catch(error:any){if(error.status!==409)throw error;staleRejected=true;}
 if(!staleRejected)throw new Error('Stale base was accepted');
 const restored=await run('restore',first,revised.revision_receipt,provisioned.revision_receipt);
-await writeFile(`${directory}/build-interop.json`,JSON.stringify({status:'real-local-native-provision-revise-restore-passed',buildCommit,origin,staleRejected,results},null,2)+'\n');
+await writeFile(`${directory}/build-interop.json`,JSON.stringify({status:'real-native-provision-revise-restore-passed',buildCommit,origin,staleRejected,results},null,2)+'\n');
 console.log('Build producer and writer verified real PHP native provision, revision, stale rejection, restore, replay and public observation.');

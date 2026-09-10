@@ -15,7 +15,12 @@ const browser=await chromium.launch({headless:true});
 const observations=[];
 for(const [name,width,height] of [['desktop',1440,1000],['mobile',390,844]]){
  const page=await browser.newPage({viewport:{width,height},deviceScaleFactor:1});
- const response=await page.goto(proof.origin+'/',{waitUntil:'networkidle'});
+ const preview=restored.receipt.protected_preview.url ?? proof.origin+'/';
+ await page.route("**/*", async route => {
+  if(new URL(route.request().url()).origin!==new URL(proof.origin).origin)return route.abort();
+  await route.continue({headers:{...route.request().headers(),authorization:`Bearer ${apiToken}`}});
+ });
+ const response=await page.goto(preview,{waitUntil:'networkidle',timeout:60000});
  const observed=await page.evaluate(()=>({heading:document.querySelector('h1')?.textContent,nativeElements:document.querySelectorAll('[id^="brxe-"]').length,images:[...document.images].map(image=>({src:image.currentSrc,loaded:image.complete&&image.naturalWidth>0,width:image.naturalWidth})),overflow:document.documentElement.scrollWidth>innerWidth}));
  if(response.status()!==200||observed.heading!=='A brighter home'||!observed.nativeElements||!observed.images.length||observed.images.some(image=>!image.loaded)||observed.overflow)throw new Error('Cold native render failed '+JSON.stringify(observed));
  await page.screenshot({path:`${evidence}/${name}.png`,fullPage:true});
