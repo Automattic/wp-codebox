@@ -103,6 +103,37 @@ try {
 } finally {
   await cleanupRecipePreparedSources([], preparedMdiPlugins)
 }
+const candidateMdiSource = "/tmp/markdown-database-integration"
+const candidateMdiRecipe = buildWordPressPhpunitRecipe({
+  pluginSlug: "example",
+  databaseType: "mdi-native",
+  extra_plugins: [{
+    source: candidateMdiSource,
+    slug: "markdown-database-integration",
+    sha256: "0123456789abcdef",
+    activate: true,
+    metadata: { revision: "548042c47efac724d13d25744765dbc65a851b20" },
+  }],
+})
+assert.deepEqual(candidateMdiRecipe.inputs?.extra_plugins, [{
+  source: candidateMdiSource,
+  slug: "markdown-database-integration",
+  sha256: "0123456789abcdef",
+  pluginFile: "markdown-database-integration/markdown-database-integration.php",
+  activate: false,
+  metadata: { revision: "548042c47efac724d13d25744765dbc65a851b20", phase: "pre-install", databaseDropIn: true },
+}])
+assert.throws(
+  () => buildWordPressPhpunitRecipe({
+    pluginSlug: "example",
+    databaseType: "mdi-native",
+    extra_plugins: [
+      { source: "/tmp/one", slug: "markdown-database-integration" },
+      { source: "/tmp/two", slug: "markdown-database-integration" },
+    ],
+  }),
+  /at most one markdown-database-integration extra plugin source/,
+)
 assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "example", wordpressInstallMode: "do-not-attempt-installing" }).runtime?.wordpressInstallMode, "do-not-attempt-installing")
 const builderDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-builder-"))
 try {
