@@ -27,6 +27,10 @@ test("canonical native artifact preserves authored payload and independent runti
   assert.deepEqual(await validateNativeBricksArtifact(bytes(value)), value)
   assert.notEqual(await sha256Hex(bytes(value)), value.runtime.sha256)
   assert.equal(stableJson({ z: 1, a: { d: 3, b: 2 } }), '{"a":{"b":2,"d":3},"z":1}')
+  value.evidence_inputs.creative_provenance.references = []
+  assert.deepEqual((await validateNativeBricksArtifact(bytes(value))).evidence_inputs.creative_provenance.references, [])
+  delete value.evidence_inputs.creative_provenance.guideSha256
+  await assert.rejects(validateNativeBricksArtifact(bytes(value)), /expected fields/)
 })
 
 test("rejects noncanonical, oversized, unknown-field and deeply nested envelopes before execution", async () => {

@@ -85,7 +85,7 @@ export async function validateNativeBricksArtifact(bytes: Uint8Array): Promise<N
   const provenance = object(evidence.creative_provenance, ["version", "canonicalCommit", "guideSha256", "catalogSha256", "references"])
   text(provenance.version, 120); requireValue(/^[a-f0-9]{40}$/u.test(text(provenance.canonicalCommit, 40)), "canonical source commit")
   digest(provenance.guideSha256); digest(provenance.catalogSha256)
-  const references = list(provenance.references, 32, 1).map(item => { const row = object(item, ["id", "sha256"]); identifier(row.id); digest(row.sha256); return row })
+  const references = list(provenance.references, 32).map(item => { const row = object(item, ["id", "sha256"]); identifier(row.id); digest(row.sha256); return row })
   unique(references.map(row => row.id), "reference ID"); unique(references.map(row => row.sha256), "reference hash")
   const authorized = list(evidence.authorized_asset_hashes, 100).map(digest)
   const design = object(root.design_system, ["version", "palette", "typography", "global_classes", "global_variables", "theme_style"])
