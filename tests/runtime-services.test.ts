@@ -134,6 +134,14 @@ assert.throws(
   }),
   /at most one markdown-database-integration extra plugin source/,
 )
+assert.throws(
+  () => buildWordPressPhpunitRecipe({
+    pluginSlug: "example",
+    databaseType: "mdi-native",
+    extra_plugins: [{ source: "/tmp/mdi", slug: "markdown-database-integration", loadAs: "mu-plugin" }],
+  }),
+  /must use loadAs=plugin/,
+)
 assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "example", wordpressInstallMode: "do-not-attempt-installing" }).runtime?.wordpressInstallMode, "do-not-attempt-installing")
 const builderDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-builder-"))
 try {

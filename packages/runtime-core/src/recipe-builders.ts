@@ -169,6 +169,9 @@ function nativeMdiPlugin(plugins: readonly WorkspaceRecipeExtraPlugin[]): Worksp
   }
   const candidate = candidates[0]
   if (candidate) {
+    if (candidate.loadAs !== undefined && candidate.loadAs !== "plugin") {
+      throw new Error("mdi-native markdown-database-integration source must use loadAs=plugin")
+    }
     return {
       ...candidate,
       slug: "markdown-database-integration",
