@@ -31,7 +31,9 @@ candidate.documents.pages[0].title='Native API revised heading';
 candidate.documents.pages[0].elements[0].children[0].children[0].settings.text='Native API revised heading';
 const second = await createWordPressBricksSiteArtifact(candidate);
 const writer = new WordPressBricksCloudflareWriter({baseUrl:'https://native-operator-rehearsal.invalid',bearerToken:credentials.apiToken,fetcher:async(request:Request)=>{
- const url=new URL(request.url); return fetch(new Request(origin+url.pathname+url.search,request));
+ const url=new URL(request.url); const response=await fetch(new Request(origin+url.pathname+url.search,request));
+ if(!response.ok) await writeFile(`${directory}/last-http-error.json`,JSON.stringify({status:response.status,path:url.pathname,body:(await response.clone().text()).slice(0,12000)},null,2));
+ return response;
 }});
 const results:any[]=[];
 function request(action:string, artifact:any, base:any=null, restore:any=null,suffix=action){

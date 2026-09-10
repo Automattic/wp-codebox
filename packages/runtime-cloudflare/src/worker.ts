@@ -1638,12 +1638,13 @@ async function disposeRequestHandler(requestHandler: PHPRequestHandler): Promise
   await dispose.call(requestHandler)
 }
 
-async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<string, string>, includeWebsiteImporter = false, site: SiteContext = DEFAULT_SITE_CONTEXT, trace?: CloudflarePhaseTrace): Promise<Runtime> {
+async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<string, string>, includeWebsiteImporter = false, site: SiteContext = DEFAULT_SITE_CONTEXT, trace?: CloudflarePhaseTrace, checkpoint?: (stage: string) => Promise<void>): Promise<Runtime> {
   // Reading the bounded, server-required revision before constructing PHP
   // measured about 8 MiB lower at Bricks init than fetching each object from
   // inside the live PHP hook. bootWordPressRuntime severs these arrays after
   // copying them into MEMFS, so the request handler does not retain a duplicate.
   const revision = await readCanonicalRevision(bucket, pointer, site, trace)
+  await checkpoint?.("canonical-hydrated")
   // Bricks media-health checks and WordPress image operations need real files.
   // Hydrate the integrity-checked canonical uploads even though browser assets
   // are served from R2. Persistence inventories MEMFS, so omitting these files
@@ -1654,6 +1655,7 @@ async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: s
   revision.wpContent = []
   revision.wpContentDeleted = []
   revision.wpContentR2OnlyPaths = []
+  await checkpoint?.("php-ready")
   return { ...booted, pointer }
 }
 
@@ -1719,7 +1721,7 @@ async function canonicalWordPressAuthConstants(env: RuntimeEnv, site: SiteContex
   }
 }
 
-async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: MarkdownChanges, site: SiteContext, diagnosticsStartedAt = Date.now(), retained = new MutationRetainedBytes(), trace?: CloudflarePhaseTrace): Promise<MarkdownPointer> {
+async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: MarkdownChanges, site: SiteContext, diagnosticsStartedAt = Date.now(), retained = new MutationRetainedBytes(), trace?: CloudflarePhaseTrace, native?: { releaseBeforePack: () => Promise<void>; checkpoint: (stage: string) => Promise<void> }): Promise<MarkdownPointer> {
   validateMarkdownChanges(changes)
   const currentManifest = trace ? await trace.measure("canonical.manifest.current.read", () => readMarkdownManifest(bucket, runtime.pointer, site)) : await readMarkdownManifest(bucket, runtime.pointer, site)
   if (!currentManifest) throw new Error(`R2 Markdown manifest is missing: ${runtime.pointer.manifestKey}`)
@@ -1728,10 +1730,14 @@ async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: Markd
   validateWpContentDeletedPaths(currentManifest.wpContentDeleted ?? [], WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   const changedPaths = [...changes.created, ...changes.changed].sort((left, right) => left.localeCompare(right))
   const uploads = trace ? await trace.measure("persistence.upload.inventory", () => collectUploadFiles(runtime.php)) : await collectUploadFiles(runtime.php)
+  await native?.checkpoint("upload-inventoried")
   logMutationPhase(diagnosticsStartedAt, "upload-inventory", retained, { files: uploads.length, bytes: sumMetadataBytes(uploads) })
   const uploadManifestFiles = trace ? await trace.measure("persistence.upload.write", () => persistRuntimeObjects(bucket, runtime.php, UPLOADS_ROOT, uploads, currentManifest.uploads ?? [], siteStorageKeys(site).uploadObjectPrefix, retained)) : await persistRuntimeObjects(bucket, runtime.php, UPLOADS_ROOT, uploads, currentManifest.uploads ?? [], siteStorageKeys(site).uploadObjectPrefix, retained)
   logMutationPhase(diagnosticsStartedAt, "upload-persist", retained, { files: uploadManifestFiles.length })
-  const wpContentInventory = trace ? await trace.measure("persistence.wp-content.inventory", () => collectWpContentFiles(runtime.php)) : await collectWpContentFiles(runtime.php)
+  await native?.checkpoint("uploads-persisted")
+  // Native document authoring cannot mutate its pinned theme/plugin package.
+  // Keep that immutable inventory; generated media/CSS lives under uploads.
+  const wpContentInventory = native ? { files: currentManifest.wpContent ?? [], deleted: currentManifest.wpContentDeleted ?? [] } : trace ? await trace.measure("persistence.wp-content.inventory", () => collectWpContentFiles(runtime.php)) : await collectWpContentFiles(runtime.php)
   // A reconstructed PHP-WASM runtime intentionally does not contain Bricks'
   // R2-only public assets/translations. Retain their immutable manifest rows
   // across content-only edits; a warm theme upload supplies the authoritative
@@ -1748,6 +1754,7 @@ async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: Markd
   }
   logMutationPhase(diagnosticsStartedAt, "wp-content-inventory", retained, { files: wpContent.files.length, bytes: sumMetadataBytes(wpContent.files), deleted: wpContent.deleted.length })
   const wpContentManifestFiles = trace ? await trace.measure("persistence.wp-content.write", () => persistRuntimeObjects(bucket, runtime.php, "/wordpress/wp-content", wpContent.files, currentManifest.wpContent ?? [], siteStorageKeys(site).wpContentObjectPrefix, retained)) : await persistRuntimeObjects(bucket, runtime.php, "/wordpress/wp-content", wpContent.files, currentManifest.wpContent ?? [], siteStorageKeys(site).wpContentObjectPrefix, retained)
+  await native?.checkpoint("wp-content-preserved")
   logMutationPhase(diagnosticsStartedAt, "wp-content-persist", retained, { files: wpContentManifestFiles.length })
 
   const manifestFiles = new Map(currentManifest.files.map((file) => [file.path, file]))
@@ -1776,6 +1783,7 @@ async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: Markd
     if (trace) trace.end({ bytes: markdownBytes, failed: true })
     throw error
   }
+  await native?.checkpoint("canonical-objects-persisted")
   logMutationPhase(diagnosticsStartedAt, "markdown-persist", retained, { files: changedPaths.length })
 
   const files = [...manifestFiles.values()].sort((left, right) => left.path.localeCompare(right.path))
@@ -1784,7 +1792,7 @@ async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: Markd
     && JSON.stringify(currentManifest.wpContent ?? []) === JSON.stringify(wpContentManifestFiles)
     && JSON.stringify(currentManifest.wpContentDeleted ?? []) === JSON.stringify(wpContent.deleted)
   if (unchanged) return runtime.pointer
-  return trace ? trace.measure("persistence.manifest.write", () => persistMarkdownManifest(bucket, files, site, uploadManifestFiles, wpContentManifestFiles, wpContent.deleted), { files: files.length }) : persistMarkdownManifest(bucket, files, site, uploadManifestFiles, wpContentManifestFiles, wpContent.deleted)
+  return trace ? trace.measure("persistence.manifest.write", () => persistMarkdownManifest(bucket, files, site, uploadManifestFiles, wpContentManifestFiles, wpContent.deleted, { php: runtime.php, releaseBeforePack: native?.releaseBeforePack, checkpoint: native?.checkpoint }), { files: files.length }) : persistMarkdownManifest(bucket, files, site, uploadManifestFiles, wpContentManifestFiles, wpContent.deleted, { php: runtime.php, releaseBeforePack: native?.releaseBeforePack, checkpoint: native?.checkpoint })
 }
 
 function readCanonicalChanges(php: PHP): MarkdownChanges {
@@ -1963,14 +1971,20 @@ async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer,
 function sumManifestFileBytes(files: MarkdownManifestFile[]): number { return files.reduce((total, file) => total + file.size, 0) }
 
 async function readManifestFiles(bucket: R2Bucket, files: MarkdownManifestFile[], label: string): Promise<RuntimeFile[]> {
-  return Promise.all(files.map(async (file): Promise<RuntimeFile> => {
-    const object = await bucket.get(file.objectKey)
-    if (!object) throw new Error(`R2 ${label} object is missing: ${file.objectKey}`)
-    if (object.size !== file.size) throw new Error(`R2 ${label} object failed size validation: ${file.objectKey}`)
-    const bytes = new Uint8Array(await object.arrayBuffer())
-    if (bytes.byteLength !== file.size || await sha256Hex(bytes) !== file.sha256) throw new Error(`R2 ${label} object failed integrity validation: ${file.objectKey}`)
-    return { path: file.path, bytes }
-  }))
+  const result: RuntimeFile[] = []
+  // A first native allocation may have hundreds of PHP files before a restore
+  // pack exists. Bound concurrent R2 requests and their retained response data.
+  for (let offset = 0; offset < files.length; offset += 24) {
+    result.push(...await Promise.all(files.slice(offset, offset + 24).map(async (file): Promise<RuntimeFile> => {
+      const object = await bucket.get(file.objectKey)
+      if (!object) throw new Error(`R2 ${label} object is missing: ${file.objectKey}`)
+      if (object.size !== file.size) throw new Error(`R2 ${label} object failed size validation: ${file.objectKey}`)
+      const bytes = new Uint8Array(await object.arrayBuffer())
+      if (bytes.byteLength !== file.size || await sha256Hex(bytes) !== file.sha256) throw new Error(`R2 ${label} object failed integrity validation: ${file.objectKey}`)
+      return { path: file.path, bytes }
+    })))
+  }
+  return result
 }
 
 async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[], site: SiteContext = DEFAULT_SITE_CONTEXT, current?: MarkdownPointer, changes?: MarkdownChanges, uploads: RuntimeFile[] = [], wpContent: RuntimeFile[] = [], wpContentDeleted: string[] = []): Promise<MarkdownPointer> {
@@ -2057,7 +2071,7 @@ function validateUploadFiles(files: RuntimeFile[]): void {
   validateUploadMetadata(files.map((file) => ({ path: file.path, size: file.bytes.byteLength })))
 }
 
-async function persistMarkdownManifest(bucket: R2Bucket, files: MarkdownManifestFile[], site: SiteContext, uploads: MarkdownManifestFile[] = [], wpContent: MarkdownManifestFile[] = [], wpContentDeleted: string[] = []): Promise<MarkdownPointer> {
+async function persistMarkdownManifest(bucket: R2Bucket, files: MarkdownManifestFile[], site: SiteContext, uploads: MarkdownManifestFile[] = [], wpContent: MarkdownManifestFile[] = [], wpContentDeleted: string[] = [], packedSource?: { php?: PHP; metadata?: CanonicalRestorePackMetadata; releaseBeforePack?: () => Promise<void>; checkpoint?: (stage: string) => Promise<void> }): Promise<MarkdownPointer> {
   const revision = crypto.randomUUID()
   const manifestKey = `${siteStorageKeys(site).markdownRevisionPrefix}/${revision}.json`
   const persistedAt = new Date().toISOString()
@@ -2070,13 +2084,39 @@ async function persistMarkdownManifest(bucket: R2Bucket, files: MarkdownManifest
   // only data PHP needs at boot. Existing upload bodies and browser-only Bricks
   // assets remain addressable as immutable R2 objects through the full manifest.
   const materializedWpContent = wpContent.filter((file) => isWorkerMaterializedWpContentPath(file.path))
-  const [markdown, restoredWpContent] = await Promise.all([
-    readManifestFiles(bucket, files, "Markdown"),
-    readManifestFiles(bucket, materializedWpContent, "wp-content"),
-  ])
-  const pack = await createCanonicalRestorePack(siteStorageKeys(site).root, { markdown, uploads: [], wpContent: restoredWpContent, wpContentDeleted })
-  await putImmutableBytes(bucket, pack.metadata.objectKey, pack.bytes, "application/zip")
-  const manifest: MarkdownManifest = { ...pointer, files, uploads, wpContent, wpContentDeleted, restorePack: pack.metadata }
+  let restorePack = packedSource?.metadata
+  if (restorePack) {
+    validateCanonicalRestorePackMetadata(restorePack, siteStorageKeys(site).root, { markdown: files, uploads: [], wpContent: materializedWpContent })
+  } else {
+    const fromPhp = async (root: string, sourceFiles: MarkdownManifestFile[]): Promise<RuntimeFile[]> => {
+      const result: RuntimeFile[] = []
+      for (const file of sourceFiles) {
+        let bytes = packedSource!.php!.readFileAsBuffer(`${root}/${file.path}`)
+        if (bytes.byteLength !== file.size || await sha256Hex(bytes) !== file.sha256) {
+          // These two files receive checked-in Cloudflare materialization
+          // patches. Keep the pinned vendor bytes in canonical native packs;
+          // the same runtime patches are applied again at every reconstruction.
+          if (!packedSource?.releaseBeforePack || !["themes/bricks/includes/helpers.php", "themes/bricks/includes/init.php"].includes(file.path)) throw new Error(`Materialized restore-pack source differs from canonical objects: ${file.path}`)
+          bytes = (await readManifestFiles(bucket, [file], "pinned runtime"))[0].bytes
+        }
+        result.push({ path: file.path, bytes })
+        if (packedSource?.releaseBeforePack) packedSource.php!.unlink(`${root}/${file.path}`)
+      }
+      return result
+    }
+    // The mutation already has verified PHP files. Refetching every unchanged
+    // object here consumed over 1,000 subrequests for a native Bricks document.
+    const [markdown, restoredWpContent] = packedSource?.php
+      ? await Promise.all([fromPhp(MARKDOWN_ROOT, files), fromPhp("/wordpress/wp-content", materializedWpContent)])
+      : await Promise.all([readManifestFiles(bucket, files, "Markdown"), readManifestFiles(bucket, materializedWpContent, "wp-content")])
+    await packedSource?.checkpoint?.("pack-source-copied")
+    await packedSource?.releaseBeforePack?.()
+    await packedSource?.checkpoint?.("php-released")
+    const pack = await createCanonicalRestorePack(siteStorageKeys(site).root, { markdown, uploads: [], wpContent: restoredWpContent, wpContentDeleted })
+    await putImmutableBytes(bucket, pack.metadata.objectKey, pack.bytes, "application/zip")
+    restorePack = pack.metadata
+  }
+  const manifest: MarkdownManifest = { ...pointer, files, uploads, wpContent, wpContentDeleted, restorePack }
   await bucket.put(manifestKey, JSON.stringify(manifest), {
     httpMetadata: { contentType: "application/json" },
   })
@@ -3436,12 +3476,17 @@ async function runNativeBricksMutation(env: RuntimeEnv, site: SiteContext, input
   const start = Date.now()
   const restoredFrom = input.authority.restoreTarget
   const source = restoredFrom ? { revision: restoredFrom.canonical_state_revision, manifestKey: restoredFrom.canonical_manifest_key, persistedAt: restoredFrom.canonical_persisted_at } : lease.pointer
-  let runtime: Runtime | undefined = await bootRuntime(env.WORDPRESS_STATE_BUCKET, source, site.origin, await canonicalWordPressAuthConstants(env, site), false, site)
+  const checkpoint = async (stage: string) => {
+    await env.WORDPRESS_STATE_BUCKET.put(`${siteStorageKeys(site).root}/native-diagnostics/${input.operationId}.json`, JSON.stringify({ stage, operation_id: input.operationId, deployment_version: env.WORDPRESS_VERSION_METADATA?.id ?? env.WORDPRESS_NATIVE_DEPLOYMENT_VERSION ?? null, wall_ms: Date.now() - start }), { httpMetadata: { contentType: "application/json" } })
+  }
+  await checkpoint("boot-started")
+  let runtime: Runtime | undefined = await bootRuntime(env.WORDPRESS_STATE_BUCKET, source, site.origin, await canonicalWordPressAuthConstants(env, site), false, site, undefined, checkpoint)
   try {
     runtime.php.writeFile("/tmp/native-bricks-input.json", new TextEncoder().encode(JSON.stringify({ action: restoredFrom ? "restore-read" : input.action, artifact })))
     runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
     initializePublicationChanges(runtime.php)
     const response = await runtime.php.run({ code: NATIVE_BRICKS_APPLY_PHP })
+    await checkpoint("native-php-applied")
     let observed: { native_records: { page_ids: number[]; template_ids: number[]; media_ids: number[] }; native_document_hashes: string[]; design_system_version: string; peak_php_bytes: number }
     try { observed = JSON.parse(response.text) } catch { throw new Error("Native execution did not produce a clean JSON observation.") }
     if (!observed.native_document_hashes?.length || observed.native_document_hashes.some(hash => !/^[a-f0-9]{64}$/.test(hash))) throw new Error("Native execution did not return document digests.")
@@ -3452,11 +3497,15 @@ async function runNativeBricksMutation(env: RuntimeEnv, site: SiteContext, input
       if (!manifest) throw new Error("Retained restore manifest is unavailable.")
       await disposeRequestHandler(runtime.requestHandler); runtime = undefined
       // New immutable revision, same restored content. The coordinator never rewinds.
-      pointer = await persistMarkdownManifest(env.WORDPRESS_STATE_BUCKET, manifest.files, site, manifest.uploads ?? [], manifest.wpContent ?? [], manifest.wpContentDeleted ?? [])
+      pointer = await persistMarkdownManifest(env.WORDPRESS_STATE_BUCKET, manifest.files, site, manifest.uploads ?? [], manifest.wpContent ?? [], manifest.wpContentDeleted ?? [], { metadata: manifest.restorePack })
     } else {
-      pointer = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, readCanonicalChanges(runtime.php), site)
-      await disposeRequestHandler(runtime.requestHandler); runtime = undefined
+      pointer = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, readCanonicalChanges(runtime.php), site, Date.now(), new MutationRetainedBytes(), undefined, {
+        checkpoint,
+        releaseBeforePack: async () => { if (runtime) await disposeRequestHandler(runtime.requestHandler); runtime = undefined },
+      })
+      if (runtime) await disposeRequestHandler(runtime.requestHandler); runtime = undefined
     }
+    await checkpoint("canonical-persisted")
     const revision: NativePointer = {
       receipt_id: `native_${crypto.randomUUID().replace(/-/g, "")}`,
       canonical_state_version: lease.version + 1,

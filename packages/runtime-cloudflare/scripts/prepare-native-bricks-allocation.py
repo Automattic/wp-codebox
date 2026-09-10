@@ -5,7 +5,7 @@ The source is a retained Miniflare fixture containing the agency-authorized runt
 package. WordPress baseline data comes from the checked-in canonical seed. Customer
 pages, media, design resources, histories, and credentials are not copied.
 """
-import argparse, base64, datetime, hashlib, json, re, secrets, sqlite3, uuid, zipfile
+import argparse, base64, datetime, hashlib, io, json, re, secrets, sqlite3, uuid, zipfile
 from urllib.parse import urlparse
 from pathlib import Path
 
@@ -91,6 +91,18 @@ def main():
     revision=str(uuid.uuid4()); stamp=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
     pointer={'revision':revision,'manifestKey':'sites/'+site+'/markdown/revisions/'+revision+'.json','persistedAt':stamp}
     clean={**pointer,'files':canonical,'uploads':[],'wpContent':wp_content,'wpContentDeleted':[]}
+    # Prepare the one-read PHP reconstruction pack outside Worker request limits.
+    runtime_files=[file for file in wp_content if not file['path'].startswith(('themes/bricks/assets/','themes/bricks/languages/'))]
+    packed=[('markdown/'+file['path'],file) for file in canonical]+[('wp-content/'+file['path'],file) for file in runtime_files]
+    buffer=io.BytesIO()
+    with zipfile.ZipFile(buffer,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as pack:
+        for name,file in sorted(packed):
+            blob=objects.execute('SELECT blob_id FROM _mf_objects WHERE key=?',(file['objectKey'],)).fetchone()[0]
+            pack.writestr(name,(blobs/blob).read_bytes())
+        pack.writestr('metadata/wp-content-deleted.json','{"wpContentDeleted":[]}')
+    packed_bytes=buffer.getvalue(); digest=hashlib.sha256(packed_bytes).hexdigest()
+    metadata={'schema':'wp-codebox/cloudflare-canonical-restore-pack/v1','objectKey':'sites/'+site+'/restore-packs/'+digest+'.zip','sha256':digest,'size':len(packed_bytes),'fileCount':len(packed),'decodedBytes':sum(file['size'] for _,file in packed)}
+    put(metadata['objectKey'],packed_bytes,'application/zip'); clean['restorePack']=metadata
     put(pointer['manifestKey'],json.dumps(clean,separators=(',',':')).encode(),'application/json'); objects.commit()
     target_d1=dest/source_d1.relative_to(source); target_d1.parent.mkdir(parents=True)
     database=sqlite3.connect(target_d1); source_database.backup(database); database.execute('PRAGMA foreign_keys=OFF')

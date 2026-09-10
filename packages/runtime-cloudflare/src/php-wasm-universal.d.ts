@@ -15,6 +15,7 @@ declare module "@php-wasm/universal" {
   }
 
   export class PHP {
+    unlink(path: string): void
     constructor(runtimeId: number)
     run(request: { code: string }): Promise<{ bytes: Uint8Array; text: string }>
     isDir(path: string): boolean
