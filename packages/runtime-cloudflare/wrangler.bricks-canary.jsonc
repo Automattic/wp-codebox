@@ -31,13 +31,13 @@
     ]
   },
   "r2_buckets": [
-    { "binding": "WORDPRESS_STATE_BUCKET", "bucket_name": "bricks24-native-canary-20260910b" }
+    { "binding": "WORDPRESS_STATE_BUCKET", "bucket_name": "bricks24-native-canary-20260910" }
   ],
   "d1_databases": [
     {
       "binding": "WORDPRESS_STATE_DATABASE",
-      "database_name": "bricks24-native-canary-20260910b",
-      "database_id": "6b7b36c7-8f5e-4faa-80ad-a4eed78f050b"
+      "database_name": "bricks24-native-canary-20260910",
+      "database_id": "fe4d6486-6cd6-4a2e-9542-4f2dd8af7d8a"
     }
   ],
   "rules": [

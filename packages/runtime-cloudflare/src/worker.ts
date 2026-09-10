@@ -1,4 +1,5 @@
 import { loadPHPRuntime, PHP, type PHPRequestHandler, type PHPResponseData } from "@php-wasm/universal"
+import { patchBricksRandomIds, restoreBricksSettings } from "./bricks-clock-compatibility.js"
 import { decodeZip } from "@php-wasm/stream-compression"
 import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-playground/wordpress"
 // The PHP-WASM package publishes this Emscripten loader without TypeScript declarations.
@@ -2798,6 +2799,9 @@ function patchCanonicalThemeJsonCustomCss(php: PHP): void {
 function patchBricksCloudflareRuntime(php: PHP): void {
   const path = "/wordpress/wp-content/themes/bricks/includes/init.php"
   if (!php.isDir("/wordpress/wp-content/themes/bricks/includes")) return
+  const helpersPath = "/wordpress/wp-content/themes/bricks/includes/helpers.php"
+  const helpers = new TextDecoder().decode(php.readFileAsBuffer(helpersPath))
+  php.writeFile(helpersPath, new TextEncoder().encode(patchBricksRandomIds(helpers)))
   let source = new TextDecoder().decode(php.readFileAsBuffer(path))
   const patchedMarkers = [
     "$is_interactive = is_admin() || bricks_is_builder() || wp_doing_ajax()",
@@ -2811,6 +2815,7 @@ function patchBricksCloudflareRuntime(php: PHP): void {
   ]
   if (source.includes(patchedMarkers[0])) {
     if (!patchedMarkers.every((marker) => source.includes(marker))) throw new Error("Bricks Cloudflare runtime patch is only partially applied.")
+    php.writeFile(path, new TextEncoder().encode(restoreBricksSettings(source)))
     return
   }
   const replaceUnique = (needle: string, replacement: string): void => {
@@ -2862,7 +2867,7 @@ function patchBricksCloudflareRuntime(php: PHP): void {
     "\t\t$this->heartbeat = new Heartbeat();",
     "\t\tif ( $is_interactive ) $this->heartbeat = new Heartbeat();",
   )
-  php.writeFile(path, new TextEncoder().encode(source))
+  php.writeFile(path, new TextEncoder().encode(restoreBricksSettings(source)))
 }
 
 function collectRuntimeFiles(php: PHP, root: string, paths?: string[]): RuntimeFile[] {
