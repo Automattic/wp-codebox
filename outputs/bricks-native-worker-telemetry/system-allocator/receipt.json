@@ -1,0 +1,94 @@
+{
+  "schema": "wp-codebox/native-worker-system-allocator-rehearsal/v1",
+  "source_commit": "0bd5103e",
+  "worker_version": "7657aa45-c5f2-4ac5-ab0c-783544bc3452",
+  "observed_at": "2026-09-10T20:36:30.540168+00:00",
+  "functional_result": "passed",
+  "memory_qualification": "failed",
+  "memory_limit_bytes": 134217728,
+  "php_allocator": "system",
+  "php_memory_counter": "unavailable",
+  "state_before": [
+    {
+      "site_id": "default",
+      "revision": "11378c4e-5194-4f1a-ae87-a6c9f16087c9",
+      "manifest_key": "sites/default/markdown/revisions/11378c4e-5194-4f1a-ae87-a6c9f16087c9.json",
+      "persisted_at": "2026-09-10T07:35:35.441Z",
+      "version": 24,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-api",
+      "revision": "3255b220-cff9-465d-b58e-73859918764c",
+      "manifest_key": "sites/native-api/markdown/revisions/3255b220-cff9-465d-b58e-73859918764c.json",
+      "persisted_at": "2026-09-10T20:15:44.801Z",
+      "version": 7,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-engine",
+      "revision": "ee5555b1-c849-464e-83c5-064f7d359cce",
+      "manifest_key": "sites/native-engine/markdown/revisions/ee5555b1-c849-464e-83c5-064f7d359cce.json",
+      "persisted_at": "2026-09-10T19:08:39.332Z",
+      "version": 1,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-sales-rehearsal",
+      "revision": "8be31b29-8405-4649-b212-3ea77e4c0660",
+      "manifest_key": "sites/native-sales-rehearsal/markdown/revisions/8be31b29-8405-4649-b212-3ea77e4c0660.json",
+      "persisted_at": "2026-09-10T19:56:30.650Z",
+      "version": 1,
+      "lease_token": null
+    }
+  ],
+  "state_after": [
+    {
+      "site_id": "default",
+      "revision": "11378c4e-5194-4f1a-ae87-a6c9f16087c9",
+      "manifest_key": "sites/default/markdown/revisions/11378c4e-5194-4f1a-ae87-a6c9f16087c9.json",
+      "persisted_at": "2026-09-10T07:35:35.441Z",
+      "version": 24,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-api",
+      "revision": "be767628-161b-4f22-b93c-094aaf79b1d0",
+      "manifest_key": "sites/native-api/markdown/revisions/be767628-161b-4f22-b93c-094aaf79b1d0.json",
+      "persisted_at": "2026-09-10T20:33:44.683Z",
+      "version": 9,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-engine",
+      "revision": "ee5555b1-c849-464e-83c5-064f7d359cce",
+      "manifest_key": "sites/native-engine/markdown/revisions/ee5555b1-c849-464e-83c5-064f7d359cce.json",
+      "persisted_at": "2026-09-10T19:08:39.332Z",
+      "version": 1,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-sales-rehearsal",
+      "revision": "8be31b29-8405-4649-b212-3ea77e4c0660",
+      "manifest_key": "sites/native-sales-rehearsal/markdown/revisions/8be31b29-8405-4649-b212-3ea77e4c0660.json",
+      "persisted_at": "2026-09-10T19:56:30.650Z",
+      "version": 1,
+      "lease_token": null
+    }
+  ],
+  "validation": {
+    "package_build": "passed",
+    "focused_tests_passed": 14,
+    "actual_native_revision_restore_render_replay_poll": "passed"
+  },
+  "files_sha256": {
+    "revised-php-measurements.json": "39dc17a89e0c21f609cd74e016ec8e328615dc9a862d9e16c065f1aa0d254300",
+    "invocations.json": "36474ab4c0e2895ca5cea4984985cae29753e3c2ca8389d1b68938b5359850c6",
+    "mutations.json": "75fc720bbeeeb60768fcdffb9f3302c9c4b412fac77bc98f6edde0eaab2b5fbc",
+    "analytics-query.json": "f8323f9589a3273297def191551e13732de859eb7aa9e5d994981e33c819b078",
+    "restored-php-measurements.json": "d62eaca3866bdbe78c277b571b7a6a39c9518163b317c5837b7487f5da79aff6",
+    "bindings-query.json": "ab6ba954572f2f790937cf4c493938dbed872475a0e8f5b8c816483d875eba04",
+    "bindings-response.json": "96a5e8872232475e57518639c3755902210ede0b6f7a8e422326afba86dfbfe0",
+    "analytics-response.json": "2d2a0d2af88e57493757c51c84bb05749e4a85c807d9cee62c1200b41d22cc05"
+  }
+}

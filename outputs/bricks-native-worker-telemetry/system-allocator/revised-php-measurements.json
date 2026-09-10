@@ -1,0 +1,15 @@
+{
+  "schema": "wp-codebox/native-bricks-resource-observation/v1",
+  "operation_id": "native_allocator_20260910_revise",
+  "wall_ms": 11774,
+  "peak_php_bytes": null,
+  "php_allocator": "system",
+  "unmeasured": [
+    "peak_php_bytes",
+    "worker_cpu_ms",
+    "peak_isolate_bytes",
+    "d1_reads_writes",
+    "r2_operations",
+    "subrequests"
+  ]
+}

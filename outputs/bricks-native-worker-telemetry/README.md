@@ -1,6 +1,6 @@
 # Native Bricks Worker telemetry
 
-The actual native revision, restoration, protected rendering, replay, and polling passed on the normally deployed disposable Cloudflare Worker. **The memory release gate failed.** Successful HTTP responses do not override the observed isolate memory above 128 MiB.
+The actual native revision, restoration, protected rendering, replay, and polling passed on the normally deployed disposable Cloudflare Worker. **The memory release gate failed.** Successful HTTP responses do not override the observed isolate memory above 128 MiB. A subsequent [system-allocator improvement](system-allocator/README.md) reduced measured memory and CPU, and passed another real revision/restore transaction; it still does not meet the memory limit. The tables below preserve the original baseline.
 
 Runtime source: `2f851aa136cb0a20a0bed1c456a6469c12767ba6`; deployed tree: `fd4775e974239de81092356223c78bb4836291db`; Worker version: `048eaf36-9226-4a86-860b-50e19cf558c6`. Only the completed `native-api` fixture was revised, from version 5 to 6 and restored as new monotonic version 7. Default canonical version 24 and the separate engine/sales allocations remained unchanged. Their version-preview deployments were not promoted or replaced.
 

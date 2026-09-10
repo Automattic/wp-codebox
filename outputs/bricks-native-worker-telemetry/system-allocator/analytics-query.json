@@ -1,0 +1,3 @@
+{
+  "query": "query {viewer { accounts(filter:{accountTag:\"c9a6d8fc0e01d908d3d399d12043b2fb\"}) {workersInvocationsAdaptive(limit:100,filter:{scriptName:\"bricks24-native-canary-20260910\",datetime_geq:\"2026-09-10T20:32:00Z\",datetime_leq:\"2026-09-10T20:35:54.289808Z\"}) {sum {subrequests requests errors} quantiles {cpuTimeP50 cpuTimeP99 memoryUsageBytesP50 memoryUsageBytesP99 memoryUsageBytesP999 wasmMemoryBytesP50 wasmMemoryBytesP99 wasmMemoryBytesP999} dimensions {datetime scriptName status}} }}}"
+}

@@ -1,0 +1,42 @@
+{
+  "data": {
+    "viewer": {
+      "accounts": [
+        {
+          "d1AnalyticsAdaptiveGroups": [
+            {
+              "dimensions": {
+                "databaseId": "fe4d6486-6cd6-4a2e-9542-4f2dd8af7d8a"
+              },
+              "sum": {
+                "readQueries": 100,
+                "rowsRead": 270,
+                "rowsWritten": 18,
+                "writeQueries": 12
+              }
+            }
+          ],
+          "r2OperationsAdaptiveGroups": [
+            {
+              "dimensions": {
+                "actionType": "PutObject"
+              },
+              "sum": {
+                "requests": 39
+              }
+            },
+            {
+              "dimensions": {
+                "actionType": "GetObject"
+              },
+              "sum": {
+                "requests": 35
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "errors": null
+}

@@ -1,0 +1,142 @@
+[
+  {
+    "eventTimestamp": 1789072326389,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/previews/native_8a3c03c11ba24262a40041c7d29a6c84/",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 3307,
+    "wall_ms": 6337,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "7657aa45-c5f2-4ac5-ab0c-783544bc3452"
+    },
+    "exceptions": [],
+    "truncated": false
+  },
+  {
+    "eventTimestamp": 1789072333069,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/previews/native_8a3c03c11ba24262a40041c7d29a6c84/",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 3037,
+    "wall_ms": 4918,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "7657aa45-c5f2-4ac5-ab0c-783544bc3452"
+    },
+    "exceptions": [],
+    "truncated": false
+  },
+  {
+    "eventTimestamp": 1789072401523,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/artifacts/REDACTED",
+    "method": "PUT",
+    "status": 200,
+    "cpu_ms": 6,
+    "wall_ms": 202,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "7657aa45-c5f2-4ac5-ab0c-783544bc3452"
+    },
+    "exceptions": [],
+    "truncated": false
+  },
+  {
+    "eventTimestamp": 1789072401770,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/revisions",
+    "method": "POST",
+    "status": 200,
+    "cpu_ms": 4458,
+    "wall_ms": 12921,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "7657aa45-c5f2-4ac5-ab0c-783544bc3452"
+    },
+    "exceptions": [],
+    "truncated": false
+  },
+  {
+    "eventTimestamp": 1789072414744,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/previews/native_f5ffc62fb8b244bc9586a8d762dbdfaa/",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 3065,
+    "wall_ms": 5478,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "7657aa45-c5f2-4ac5-ab0c-783544bc3452"
+    },
+    "exceptions": [],
+    "truncated": false
+  },
+  {
+    "eventTimestamp": 1789072420284,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/restores",
+    "method": "POST",
+    "status": 200,
+    "cpu_ms": 3118,
+    "wall_ms": 6269,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "7657aa45-c5f2-4ac5-ab0c-783544bc3452"
+    },
+    "exceptions": [],
+    "truncated": false
+  },
+  {
+    "eventTimestamp": 1789072426593,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/previews/native_f0efac00d6e14f78aa657bb3fae5ec94/",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 3134,
+    "wall_ms": 5622,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "7657aa45-c5f2-4ac5-ab0c-783544bc3452"
+    },
+    "exceptions": [],
+    "truncated": false
+  },
+  {
+    "eventTimestamp": 1789072432260,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/restores",
+    "method": "POST",
+    "status": 200,
+    "cpu_ms": 5,
+    "wall_ms": 157,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "7657aa45-c5f2-4ac5-ab0c-783544bc3452"
+    },
+    "exceptions": [],
+    "truncated": false
+  },
+  {
+    "eventTimestamp": 1789072432451,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/sites/native-api/operations/native_allocator_20260910_restore",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 2,
+    "wall_ms": 104,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "7657aa45-c5f2-4ac5-ab0c-783544bc3452"
+    },
+    "exceptions": [],
+    "truncated": false
+  },
+  {
+    "eventTimestamp": 1789072483709,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 10,
+    "wall_ms": 375,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "7657aa45-c5f2-4ac5-ab0c-783544bc3452"
+    },
+    "exceptions": [],
+    "truncated": false
+  }
+]
