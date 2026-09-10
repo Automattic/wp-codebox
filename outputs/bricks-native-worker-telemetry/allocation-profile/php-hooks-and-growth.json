@@ -1,0 +1,38 @@
+[
+  {
+    "schema": "native-wasm-grow-local",
+    "requested_bytes": 69210112
+  },
+  {
+    "schema": "native-wasm-grow-local",
+    "requested_bytes": 69210112
+  },
+  {
+    "schema": "native-wasm-grow-local",
+    "requested_bytes": 81793024
+  },
+  {
+    "schema": "native-wasm-grow-local",
+    "requested_bytes": 81793024
+  },
+  {
+    "schema": "native-wasm-grow-local",
+    "requested_bytes": 98570240
+  },
+  {
+    "schema": "native-wasm-grow-local",
+    "requested_bytes": 98570240
+  },
+  {
+    "schema": "native-wasm-grow-local",
+    "requested_bytes": 119541760
+  },
+  {
+    "schema": "native-wasm-grow-local",
+    "requested_bytes": 119541760
+  },
+  {
+    "schema": "native-php-profile",
+    "data": "{\"hook\":\"mu-plugin\",\"php_used\":30550600,\"php_allocated\":31457280,\"php_peak\":31457280}\n{\"hook\":\"plugins_loaded:-999999\",\"php_used\":31423008,\"php_allocated\":33554432,\"php_peak\":33554432}\n{\"hook\":\"plugins_loaded:999999\",\"php_used\":31962648,\"php_allocated\":33554432,\"php_peak\":33554432}\n{\"hook\":\"after_setup_theme:-999999\",\"php_used\":39647008,\"php_allocated\":42467328,\"php_peak\":42467328}\n{\"hook\":\"after_setup_theme:999999\",\"php_used\":39664728,\"php_allocated\":42467328,\"php_peak\":42467328}\n{\"hook\":\"init:-999999\",\"php_used\":39974352,\"php_allocated\":42467328,\"php_peak\":42467328}\n{\"hook\":\"init:999999\",\"php_used\":43933280,\"php_allocated\":46661632,\"php_peak\":46661632}\n{\"hook\":\"wp_loaded:-999999\",\"php_used\":43933312,\"php_allocated\":46661632,\"php_peak\":46661632}\n{\"hook\":\"wp_loaded:999999\",\"php_used\":43964064,\"php_allocated\":46661632,\"php_peak\":46661632}\n{\"hook\":\"wp:-999999\",\"php_used\":43959704,\"php_allocated\":46661632,\"php_peak\":46661632}\n{\"hook\":\"wp:999999\",\"php_used\":45782976,\"php_allocated\":46661632,\"php_peak\":46661632}\n{\"hook\":\"template_redirect:-999999\",\"php_used\":45795632,\"php_allocated\":46661632,\"php_peak\":46661632}\n{\"hook\":\"template_redirect:999999\",\"php_used\":45796288,\"php_allocated\":46661632,\"php_peak\":46661632}\n{\"hook\":\"get_header:-999999\",\"php_used\":45798784,\"php_allocated\":46661632,\"php_peak\":46661632}\n{\"hook\":\"get_header:999999\",\"php_used\":45799032,\"php_allocated\":46661632,\"php_peak\":46661632}\n{\"hook\":\"wp_head:-999999\",\"php_used\":45807592,\"php_allocated\":46661632,\"php_peak\":46661632}\n{\"hook\":\"wp_head:999999\",\"php_used\":48362184,\"php_allocated\":50855936,\"php_peak\":50855936}\n{\"hook\":\"wp_body_open:-999999\",\"php_used\":48357992,\"php_allocated\":50855936,\"php_peak\":50855936}\n{\"hook\":\"wp_body_open:999999\",\"php_used\":48358640,\"php_allocated\":50855936,\"php_peak\":50855936}\n{\"hook\":\"get_footer:-999999\",\"php_used\":48577816,\"php_allocated\":50855936,\"php_peak\":50855936}\n{\"hook\":\"get_footer:999999\",\"php_used\":48577984,\"php_allocated\":50855936,\"php_peak\":50855936}\n{\"hook\":\"wp_footer:-999999\",\"php_used\":48584184,\"php_allocated\":50855936,\"php_peak\":50855936}\n{\"hook\":\"wp_footer:999999\",\"php_used\":48603432,\"php_allocated\":50855936,\"php_peak\":50855936}\n{\"hook\":\"shutdown:-999999\",\"php_used\":48588928,\"php_allocated\":50855936,\"php_peak\":50855936}\n{\"hook\":\"shutdown:999999\",\"php_used\":48589176,\"php_allocated\":50855936,\"php_peak\":50855936}\n"
+  }
+]

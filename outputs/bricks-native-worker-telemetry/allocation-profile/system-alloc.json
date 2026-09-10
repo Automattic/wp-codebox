@@ -1,0 +1,92 @@
+[
+  {
+    "schema": "native-memory-local",
+    "stage": "before-wordpress-archive",
+    "wasm_bytes": 67108864,
+    "memfs_logical_bytes": 18528,
+    "memfs_typed_backing_bytes": 18528,
+    "memfs_plain_array_elements": 0,
+    "files": 11,
+    "heap": {
+      "usedSize": 14671300,
+      "totalSize": 32276480,
+      "embedderHeapUsedSize": 130816,
+      "backingStorageSize": 15873999
+    }
+  },
+  {
+    "schema": "native-memory-local",
+    "stage": "after-wordpress-archive",
+    "wasm_bytes": 67108864,
+    "memfs_logical_bytes": 19655508,
+    "memfs_typed_backing_bytes": 28916123,
+    "memfs_plain_array_elements": 0,
+    "files": 521,
+    "heap": {
+      "usedSize": 19910692,
+      "totalSize": 57868288,
+      "embedderHeapUsedSize": 130816,
+      "backingStorageSize": 48166030
+    }
+  },
+  {
+    "schema": "native-memory-local",
+    "stage": "after-native-memfs-hydration",
+    "wasm_bytes": 67108864,
+    "memfs_logical_bytes": 34209580,
+    "memfs_typed_backing_bytes": 43381572,
+    "memfs_plain_array_elements": 0,
+    "files": 1586,
+    "heap": {
+      "usedSize": 18709660,
+      "totalSize": 61538304,
+      "embedderHeapUsedSize": 644896,
+      "backingStorageSize": 63243306
+    }
+  },
+  {
+    "schema": "native-memory-local",
+    "stage": "native-ready",
+    "wasm_bytes": 67108864,
+    "memfs_logical_bytes": 35039384,
+    "memfs_typed_backing_bytes": 44626963,
+    "memfs_plain_array_elements": 0,
+    "files": 1605,
+    "heap": {
+      "usedSize": 24210056,
+      "totalSize": 60964864,
+      "embedderHeapUsedSize": 131336,
+      "backingStorageSize": 64249867
+    }
+  },
+  {
+    "schema": "native-memory-local",
+    "stage": "before-frontend",
+    "wasm_bytes": 67108864,
+    "memfs_logical_bytes": 35040088,
+    "memfs_typed_backing_bytes": 44627667,
+    "memfs_plain_array_elements": 0,
+    "files": 1606,
+    "heap": {
+      "usedSize": 18193768,
+      "totalSize": 60964864,
+      "embedderHeapUsedSize": 131336,
+      "backingStorageSize": 64250571
+    }
+  },
+  {
+    "schema": "native-memory-local",
+    "stage": "after-frontend",
+    "wasm_bytes": 80543744,
+    "memfs_logical_bytes": 35078779,
+    "memfs_typed_backing_bytes": 44973779,
+    "memfs_plain_array_elements": 0,
+    "files": 1607,
+    "heap": {
+      "usedSize": 21660856,
+      "totalSize": 60964864,
+      "embedderHeapUsedSize": 131336,
+      "backingStorageSize": 64964540
+    }
+  }
+]

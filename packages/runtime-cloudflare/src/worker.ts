@@ -2597,7 +2597,7 @@ async function bootWordPressRuntime(
   const sqliteIntegrationPluginZip = includeSqlite ? trace ? await trace.measure("runtime.archive.sqlite.fetch-verify", () => readSqliteIntegrationArtifact(runtimeBucket!)) : await readSqliteIntegrationArtifact(runtimeBucket!) : undefined
   const websiteImporterZip = includeWebsiteImporter ? trace ? await trace.measure("runtime.archive.component.fetch-verify", () => readWebsiteImporterArtifact(runtimeBucket!)) : await readWebsiteImporterArtifact(runtimeBucket!) : undefined
   const boot = () => bootWordPressAndRequestHandler({
-    createPhpRuntime: trace ? () => trace.measure("php.runtime.create", () => createPhpRuntime()) : createPhpRuntime,
+    createPhpRuntime: trace ? () => trace.measure("php.runtime.create", () => createPhpRuntime(disableOpcodeCache)) : () => createPhpRuntime(disableOpcodeCache),
     // Avoid OPCache file-cache memory overhead in reconstructed native runtimes.
     // The complete PHP/WordPress execution remains enabled.
     phpIniEntries: disableOpcodeCache ? { "opcache.enable": "0", "opcache.enable_cli": "0", "opcache.file_cache": "" } : undefined,
@@ -3469,10 +3469,16 @@ async function serveWordPressStaticAsset(request: Request, bucket: R2Bucket): Pr
   return response
 }
 
-function createPhpRuntime() {
+function createPhpRuntime(nativeRuntime = false) {
   return loadPHPRuntime(
     { dependencyFilename: "php_8_5.wasm", dependenciesTotalSize, phpWasmAsyncMode: "asyncify", init },
-    { instantiateWasm: instantiatePrecompiledWasm(phpWasmModule) },
+    {
+      instantiateWasm: instantiatePrecompiledWasm(phpWasmModule),
+      // Zend's chunk allocator substantially increases the native Bricks frontend's
+      // required WASM address space. PHP's system allocator avoids that cost.
+      // PHP memory_get_usage/peak are unavailable in this mode; use Worker telemetry.
+      ...(nativeRuntime ? { ENV: { USE_ZEND_ALLOC: "0" } } : {}),
+    },
   )
 }
 
@@ -3529,7 +3535,7 @@ async function runNativeBricksMutation(env: RuntimeEnv, site: SiteContext, input
       native_document_hashes: observed.native_document_hashes,
       design_system_version: observed.design_system_version,
     }
-    const measurements = JSON.stringify({ schema: "wp-codebox/native-bricks-resource-observation/v1", operation_id: input.operationId, wall_ms: Date.now() - start, peak_php_bytes: observed.peak_php_bytes, unmeasured: ["worker_cpu_ms", "peak_isolate_bytes", "d1_reads_writes", "r2_operations", "subrequests"] })
+    const measurements = JSON.stringify({ schema: "wp-codebox/native-bricks-resource-observation/v1", operation_id: input.operationId, wall_ms: Date.now() - start, peak_php_bytes: observed.peak_php_bytes > 0 ? observed.peak_php_bytes : null, php_allocator: "system", unmeasured: ["peak_php_bytes", "worker_cpu_ms", "peak_isolate_bytes", "d1_reads_writes", "r2_operations", "subrequests"] })
     const measurementsHash = await sha256Hex(new TextEncoder().encode(measurements))
     await putImmutableJson(env.WORDPRESS_STATE_BUCKET, `${siteStorageKeys(site).root}/native-evidence/${measurementsHash}.json`, measurements)
     const empty = { receipt_id: null, canonical_state_version: null, canonical_state_revision: null, canonical_manifest_key: null, canonical_persisted_at: null, artifact_sha256: null, native_document_hashes: null, design_system_version: null }

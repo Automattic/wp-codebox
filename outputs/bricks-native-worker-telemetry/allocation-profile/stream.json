@@ -1,0 +1,86 @@
+[
+  {
+    "schema": "native-memory-local",
+    "stage": "before-wordpress-archive",
+    "wasm_bytes": 67108864,
+    "memfs_logical_bytes": 18528,
+    "memfs_backing_bytes": 18528,
+    "files": 11,
+    "heap": {
+      "usedSize": 14619004,
+      "totalSize": 32538624,
+      "embedderHeapUsedSize": 130816,
+      "backingStorageSize": 15873999
+    }
+  },
+  {
+    "schema": "native-memory-local",
+    "stage": "after-wordpress-archive",
+    "wasm_bytes": 67108864,
+    "memfs_logical_bytes": 22978831,
+    "memfs_backing_bytes": 22978831,
+    "files": 2119,
+    "heap": {
+      "usedSize": 64086080,
+      "totalSize": 111296512,
+      "embedderHeapUsedSize": 7350816,
+      "backingStorageSize": 38871081
+    }
+  },
+  {
+    "schema": "native-memory-local",
+    "stage": "after-native-memfs-hydration",
+    "wasm_bytes": 67108864,
+    "memfs_logical_bytes": 37532903,
+    "memfs_backing_bytes": 37532903,
+    "files": 3184,
+    "heap": {
+      "usedSize": 28092108,
+      "totalSize": 110477312,
+      "embedderHeapUsedSize": 131376,
+      "backingStorageSize": 54582932
+    }
+  },
+  {
+    "schema": "native-memory-local",
+    "stage": "native-ready",
+    "wasm_bytes": 67108864,
+    "memfs_logical_bytes": 38506382,
+    "memfs_backing_bytes": 38921969,
+    "files": 3204,
+    "heap": {
+      "usedSize": 34819056,
+      "totalSize": 111984640,
+      "embedderHeapUsedSize": 131376,
+      "backingStorageSize": 58900655
+    }
+  },
+  {
+    "schema": "native-memory-local",
+    "stage": "before-frontend",
+    "wasm_bytes": 67108864,
+    "memfs_logical_bytes": 38507086,
+    "memfs_backing_bytes": 38922673,
+    "files": 3205,
+    "heap": {
+      "usedSize": 37826480,
+      "totalSize": 111984640,
+      "embedderHeapUsedSize": 131376,
+      "backingStorageSize": 58902063
+    }
+  },
+  {
+    "schema": "native-memory-local",
+    "stage": "after-frontend",
+    "wasm_bytes": 139198464,
+    "memfs_logical_bytes": 38546302,
+    "memfs_backing_bytes": 39270833,
+    "files": 3206,
+    "heap": {
+      "usedSize": 47902564,
+      "totalSize": 112771072,
+      "embedderHeapUsedSize": 131376,
+      "backingStorageSize": 60932957
+    }
+  }
+]
