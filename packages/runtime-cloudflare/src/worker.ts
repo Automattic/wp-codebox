@@ -1627,11 +1627,11 @@ async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: s
   // inside the live PHP hook. bootWordPressRuntime severs these arrays after
   // copying them into MEMFS, so the request handler does not retain a duplicate.
   const revision = await readCanonicalRevision(bucket, pointer, site, trace)
-  // Existing media bodies are served from immutable R2 objects. WordPress and
-  // Bricks read their attachment identity and dimensions from canonical post
-  // metadata, so copying those bodies into PHP MEMFS wastes several MiB on
-  // every interactive cold boot.
-  const booted = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, undefined, revision.wpContent, revision.wpContentDeleted, includeWebsiteImporter, trace, revision.wpContentR2OnlyPaths)
+  // Bricks media-health checks and WordPress image operations need real files.
+  // Hydrate the integrity-checked canonical uploads even though browser assets
+  // are served from R2. Persistence inventories MEMFS, so omitting these files
+  // would also turn an unrelated save into deletion of every existing upload.
+  const booted = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads, revision.wpContent, revision.wpContentDeleted, includeWebsiteImporter, trace, revision.wpContentR2OnlyPaths)
   revision.markdown = []
   revision.uploads = []
   revision.wpContent = []
@@ -1929,7 +1929,10 @@ async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer,
     const pack = trace ? await trace.measure("canonical.restore-pack.fetch", fetchPack, { requests: 1, bytes: restorePack.size }) : await fetchPack()
     const restore = () => decodeCanonicalRestorePack(restorePack, siteStorageKeys(site).root, runtimePackFiles, pack)
     const restored = trace ? await trace.measure("canonical.restore-pack.verify-decode", restore, { requests: 0, bytes: restorePack.decodedBytes, files: restorePack.fileCount }) : await restore()
-    return { markdown: restored.markdown, uploads: restored.uploads, wpContent: restored.wpContent, wpContentR2OnlyPaths, wpContentDeleted: restored.wpContentDeleted }
+    // Restore packs deliberately exclude media. The authoritative upload
+    // manifest still needs hydration, with the same hash checks as non-pack boot.
+    const uploads = await readManifestFiles(bucket, manifest.uploads ?? [], "upload")
+    return { markdown: restored.markdown, uploads, wpContent: restored.wpContent, wpContentR2OnlyPaths, wpContentDeleted: restored.wpContentDeleted }
   }
   const hydrate = () => Promise.all([
     readManifestFiles(bucket, manifest.files, "Markdown"),
