@@ -1,0 +1,200 @@
+{
+  "status": "rendered-desktop-and-mobile",
+  "origin": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev",
+  "results": [
+    {
+      "name": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "desktop.png",
+      "responseHeaders": {
+        "cache-control": "public, max-age=60, s-maxage=31536000",
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Thu, 10 Sep 2026 18:12:30 GMT",
+        "x-powered-by": "PHP/8.5.8",
+        "x-wp-codebox-page-cache": "miss",
+        "x-wp-codebox-page-cache-source": "render"
+      },
+      "evidence": {
+        "title": "Cloudflare WordPress Runtime \u2013 WordPress WebAssembly with canonical Markdown state",
+        "h1": "Restore the wood you love. Protect it for years.",
+        "nativeElementCount": 42,
+        "sections": 4,
+        "headerVisible": true,
+        "footerVisible": true,
+        "viewportWidth": 1440,
+        "scrollWidth": 1440,
+        "horizontalOverflow": false,
+        "heroColumns": "609.719px 518.281px",
+        "serviceColumns": "386.656px 386.672px 386.656px",
+        "hero": {
+          "x": 0,
+          "y": 145.328125,
+          "width": 1440,
+          "height": 827.078125
+        },
+        "heroCopy": {
+          "x": 120,
+          "y": 215.328125,
+          "width": 609.71875,
+          "height": 687.078125
+        },
+        "heroMedia": {
+          "x": 801.71875,
+          "y": 218.9375,
+          "width": 518.28125,
+          "height": 679.84375
+        },
+        "serviceGrid": {
+          "x": 120,
+          "y": 1313.453125,
+          "width": 1200,
+          "height": 225.390625
+        },
+        "cssVariables": {
+          "brandNavy": "#0B3A66",
+          "brandOrange": "#FF6A00",
+          "spaceM": "clamp(1.6rem, calc(0.0037037037 * (100vw - 36rem) + 1.6rem), 2rem)",
+          "textM": "clamp(1.6rem, calc(0.0037037037 * (100vw - 36rem) + 1.6rem), 2rem)"
+        },
+        "images": [
+          {
+            "alt": "Stain & Seal Pros",
+            "complete": true,
+            "naturalWidth": 1439,
+            "naturalHeight": 959,
+            "src": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/wp-content/uploads/2026/09/stain-seal-pros-logo-cfv2.png"
+          },
+          {
+            "alt": "Freshly restored and stained residential deck",
+            "complete": true,
+            "naturalWidth": 1200,
+            "naturalHeight": 900,
+            "src": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/wp-content/uploads/2026/09/stain-seal-pros-deck-after-cfv2.jpg"
+          },
+          {
+            "alt": "Freshly restored and stained residential deck",
+            "complete": true,
+            "naturalWidth": 1200,
+            "naturalHeight": 900,
+            "src": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/wp-content/uploads/2026/09/stain-seal-pros-deck-after-cfv2.jpg"
+          },
+          {
+            "alt": "Stain & Seal Pros",
+            "complete": true,
+            "naturalWidth": 1439,
+            "naturalHeight": 959,
+            "src": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/wp-content/uploads/2026/09/stain-seal-pros-logo-cfv2.png"
+          }
+        ]
+      },
+      "screenshotSha256": "33451581a83e43e0820e5c237e4a7ab8c094ac8c05a03bd3b4f5361465c47028"
+    },
+    {
+      "name": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "mobile.png",
+      "responseHeaders": {
+        "cache-control": "public, max-age=60, s-maxage=31536000",
+        "cf-cache-status": "HIT",
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Thu, 10 Sep 2026 18:12:33 GMT",
+        "x-powered-by": "PHP/8.5.8",
+        "x-wp-codebox-page-cache": "hit",
+        "x-wp-codebox-page-cache-source": "edge"
+      },
+      "evidence": {
+        "title": "Cloudflare WordPress Runtime \u2013 WordPress WebAssembly with canonical Markdown state",
+        "h1": "Restore the wood you love. Protect it for years.",
+        "nativeElementCount": 42,
+        "sections": 4,
+        "headerVisible": true,
+        "footerVisible": true,
+        "viewportWidth": 390,
+        "scrollWidth": 390,
+        "horizontalOverflow": false,
+        "heroColumns": "342px",
+        "serviceColumns": "342px",
+        "hero": {
+          "x": 0,
+          "y": 110.65625,
+          "width": 390,
+          "height": 859.40625
+        },
+        "heroCopy": {
+          "x": 24,
+          "y": 160.65625,
+          "width": 342,
+          "height": 437.640625
+        },
+        "heroMedia": {
+          "x": 24,
+          "y": 617.796875,
+          "width": 342,
+          "height": 282.265625
+        },
+        "serviceGrid": {
+          "x": 24,
+          "y": 1199.734375,
+          "width": 342,
+          "height": 579.140625
+        },
+        "cssVariables": {
+          "brandNavy": "#0B3A66",
+          "brandOrange": "#FF6A00",
+          "spaceM": "clamp(1.6rem, calc(0.0037037037 * (100vw - 36rem) + 1.6rem), 2rem)",
+          "textM": "clamp(1.6rem, calc(0.0037037037 * (100vw - 36rem) + 1.6rem), 2rem)"
+        },
+        "images": [
+          {
+            "alt": "Stain & Seal Pros",
+            "complete": true,
+            "naturalWidth": 390,
+            "naturalHeight": 260,
+            "src": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/wp-content/uploads/2026/09/stain-seal-pros-logo-cfv2-768x512.png"
+          },
+          {
+            "alt": "Freshly restored and stained residential deck",
+            "complete": true,
+            "naturalWidth": 390,
+            "naturalHeight": 292,
+            "src": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/wp-content/uploads/2026/09/stain-seal-pros-deck-after-cfv2-768x576.jpg"
+          },
+          {
+            "alt": "Freshly restored and stained residential deck",
+            "complete": true,
+            "naturalWidth": 390,
+            "naturalHeight": 292,
+            "src": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/wp-content/uploads/2026/09/stain-seal-pros-deck-after-cfv2-768x576.jpg"
+          },
+          {
+            "alt": "Stain & Seal Pros",
+            "complete": true,
+            "naturalWidth": 390,
+            "naturalHeight": 260,
+            "src": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/wp-content/uploads/2026/09/stain-seal-pros-logo-cfv2-768x512.png"
+          }
+        ]
+      },
+      "screenshotSha256": "865a607c8a77a79ef74154130779a244a63bc84b6fc1089a774c50ffa7755c8b"
+    }
+  ],
+  "generatedAt": "2026-09-10T18:12:35.302Z",
+  "sourceCommit": "0abe2512c43c7eca499ae71b3d689e9bc0e82931",
+  "deploymentVersion": "a1e7ea0c-119f-490d-8112-f03aad1a050c",
+  "checks": {
+    "packageBuild": "passed",
+    "canaryDryRun": "passed",
+    "focusedChecksPassed": 28,
+    "broaderChecksPassed": 37,
+    "broaderChecksFailed": 1,
+    "broaderFailure": "Existing seed reproducibility test: php executable unavailable (ENOENT)"
+  },
+  "limits": [
+    "Licensed visual editor and edit/publish/restore/reopen not tested by this proof.",
+    "Desktop is a fresh PHP render; mobile validates the same native HTML through the edge cache.",
+    "Navy project-section body text has inadequate contrast; no canonical content mutation was attempted.",
+    "The fixture contains approximately 4.1 MB uploads. The full 64 MB upload allowance is not qualified under Worker memory limits."
+  ]
+}
