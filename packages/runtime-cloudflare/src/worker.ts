@@ -22,13 +22,13 @@ import { allocationIdentity, CloudflareAllocationLifecycle } from "./allocation-
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { DEFAULT_SITE_CONTEXT, parseSiteContexts, previewDomain, resolvePreviewSiteContextFromRequest, resolveSiteContextFromRequest, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { validateUploadManifestFiles, validateUploadMetadata } from "./upload-persistence.js"
-import { deriveSiteCredential, deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
+import { deriveSiteCredential, deriveWordPressAuthConstants } from "./wordpress-auth.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
 import { materializeWordPressRuntimeArtifact, type WordPressRuntimeArtifactManifest } from "./wordpress-runtime-artifact.js"
 import { validateWordPressStaticArtifactManifest, type WordPressStaticArtifactManifest } from "./wordpress-static-artifact.js"
 import { readRuntimeArchiveArtifact, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "./runtime-archive-artifact.js"
 import { runtimeArchiveComponentOwnedWpContentPaths, type RuntimeArchiveComponent } from "@automattic/wp-codebox-core/runtime-archive-component"
-import { isCanonicalWpContentPath, MAX_WP_CONTENT_FILES, MAX_WP_CONTENT_FILE_BYTES, MAX_WP_CONTENT_TOTAL_BYTES, runtimeOwnedWpContentPaths, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "./wp-content-persistence.js"
+import { isCanonicalWpContentPath, isWorkerMaterializedWpContentPath, MAX_WP_CONTENT_FILES, MAX_WP_CONTENT_FILE_BYTES, MAX_WP_CONTENT_TOTAL_BYTES, runtimeOwnedWpContentPaths, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "./wp-content-persistence.js"
 import markdownDatabaseIntegrationRuntime from "../assets/markdown-database-integration-runtime.zip"
 import canonicalMarkdownSeed from "../assets/markdown-database-integration-canonical-seed.zip"
 import canonicalMarkdownSeedManifest from "../assets/markdown-database-integration-canonical-seed.json" with { type: "json" }
@@ -234,11 +234,21 @@ export interface RuntimeEnv {
   WORDPRESS_ADMIN_CLAIM_SECRET?: string
   WORDPRESS_ADMIN_PASSWORD?: string
   WORDPRESS_AUTH_SECRET?: string
+  // Secret binding. When set, Bricks reads its official PHP constant rather
+  // than persisting a license credential in WordPress state.
+  BRICKS_LICENSE_KEY?: string
   WORDPRESS_OPERATOR_TOKEN?: string
   WORDPRESS_API_TOKENS?: string
   WORDPRESS_STATE_DATABASE?: D1Database
   WORDPRESS_RUNTIME_QUEUE?: RuntimeQueue
   WORDPRESS_QUEUE_POLICY?: string
+  WORDPRESS_PHASE_PROGRESS_LOGS?: string
+}
+
+function requestPhaseTrace(env: RuntimeEnv): CloudflarePhaseTrace {
+  return new CloudflarePhaseTrace(undefined, env.WORDPRESS_PHASE_PROGRESS_LOGS === "1" ? (phase) => {
+    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-runtime-phase-progress/v1", ...phase }))
+  } : undefined)
 }
 
 export function createCloudflareRuntime<Env extends RuntimeEnv>(
@@ -352,9 +362,16 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       }
       if (route.kind === "operator-publish") return publishCanonicalWordPressPages(request, env, coordinator, site)
       if (route.kind === "probe") {
-        const trace = new CloudflarePhaseTrace()
+        let canonicalProbe: { pointer: MarkdownPointer; site: SiteContext; authConstants: Record<string, string> } | undefined
+        if (route.phase.startsWith("canonical-")) {
+          if (!await isAuthorizedOperator(request, env, site)) return new Response("Canonical boot probe authorization failed.", { status: 401 })
+          const state = await coordinator.state()
+          if (!state.pointer) return new Response("Canonical boot probe requires an existing pointer.", { status: 409 })
+          canonicalProbe = { pointer: state.pointer, site, authConstants: await canonicalWordPressAuthConstants(env, site) }
+        }
+        const trace = requestPhaseTrace(env)
         try {
-          const response = await trace.measure("boot-probe.opaque", () => runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET))
+          const response = await trace.measure("boot-probe.opaque", () => runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET, canonicalProbe))
           const summary = trace.complete("diagnostic", "cold", "not-applicable")
           logPhaseTrace(summary)
           return attachServerTiming(response, summary)
@@ -428,6 +445,12 @@ interface RuntimeFileMetadata {
   path: string
   size: number
   sha256: string
+}
+
+interface CanonicalHydrationPlan {
+  markdown: MarkdownManifestFile[]
+  uploads: MarkdownManifestFile[]
+  wpContent: MarkdownManifestFile[]
 }
 
 interface WordPressPageSnapshot {
@@ -1221,7 +1244,7 @@ function validateWordPressPageSnapshot(snapshot: WordPressPageSnapshot, canonica
 }
 
 async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, route: "wordpress" | "health" | "r2-mutate" | "static-artifact-import", staticArtifactImport?: StaticArtifactImport, onCommitted?: (committed: { pointer: MarkdownPointer; version: number }) => Promise<void>, onPreparedCommit?: (prepared: { pointer: MarkdownPointer; version: number; ssiResult: unknown; publicationJobKey: string | null }) => Promise<void>, heartbeat?: (stage: string, progress: number) => Promise<void>): Promise<Response> {
-  const trace = new CloudflarePhaseTrace()
+  const trace = requestPhaseTrace(env)
   const mutatesCanonicalState = isMutation(request, route)
   const operation: TraceOperation = route === "health" ? "diagnostic" : mutatesCanonicalState ? "mutation" : "read"
   let runtimeDisposition: RuntimeDisposition = "not-used"
@@ -1597,9 +1620,22 @@ async function disposeRequestHandler(requestHandler: PHPRequestHandler): Promise
   await dispose.call(requestHandler)
 }
 
-async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>, includeWebsiteImporter = false, site: SiteContext = DEFAULT_SITE_CONTEXT, trace?: CloudflarePhaseTrace): Promise<Runtime> {
+async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<string, string>, includeWebsiteImporter = false, site: SiteContext = DEFAULT_SITE_CONTEXT, trace?: CloudflarePhaseTrace): Promise<Runtime> {
+  // Reading the bounded, server-required revision before constructing PHP
+  // measured about 8 MiB lower at Bricks init than fetching each object from
+  // inside the live PHP hook. bootWordPressRuntime severs these arrays after
+  // copying them into MEMFS, so the request handler does not retain a duplicate.
   const revision = await readCanonicalRevision(bucket, pointer, site, trace)
-  const booted = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads, revision.wpContent, revision.wpContentDeleted, includeWebsiteImporter, trace)
+  // Existing media bodies are served from immutable R2 objects. WordPress and
+  // Bricks read their attachment identity and dimensions from canonical post
+  // metadata, so copying those bodies into PHP MEMFS wastes several MiB on
+  // every interactive cold boot.
+  const booted = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, undefined, revision.wpContent, revision.wpContentDeleted, includeWebsiteImporter, trace, revision.wpContentR2OnlyPaths)
+  revision.markdown = []
+  revision.uploads = []
+  revision.wpContent = []
+  revision.wpContentDeleted = []
+  revision.wpContentR2OnlyPaths = []
   return { ...booted, pointer }
 }
 
@@ -1655,8 +1691,14 @@ require '/wordpress/wp-load.php';
 $GLOBALS['wpdb']->flush_canonical_writes();
 echo 'flushed';`
 }
-async function canonicalWordPressAuthConstants(env: RuntimeEnv, site: SiteContext): Promise<Record<WordPressAuthConstant, string>> {
-  return deriveWordPressAuthConstants(env.WORDPRESS_AUTH_SECRET ?? "", site.id)
+async function canonicalWordPressAuthConstants(env: RuntimeEnv, site: SiteContext): Promise<Record<string, string>> {
+  const authConstants = await deriveWordPressAuthConstants(env.WORDPRESS_AUTH_SECRET ?? "", site.id)
+  return {
+    ...authConstants,
+    WP_HOME: site.origin,
+    WP_SITEURL: site.origin,
+    ...(env.BRICKS_LICENSE_KEY ? { BRICKS_LICENSE_KEY: env.BRICKS_LICENSE_KEY } : {}),
+  }
 }
 
 async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: MarkdownChanges, site: SiteContext, diagnosticsStartedAt = Date.now(), retained = new MutationRetainedBytes(), trace?: CloudflarePhaseTrace): Promise<MarkdownPointer> {
@@ -1671,7 +1713,21 @@ async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: Markd
   logMutationPhase(diagnosticsStartedAt, "upload-inventory", retained, { files: uploads.length, bytes: sumMetadataBytes(uploads) })
   const uploadManifestFiles = trace ? await trace.measure("persistence.upload.write", () => persistRuntimeObjects(bucket, runtime.php, UPLOADS_ROOT, uploads, currentManifest.uploads ?? [], siteStorageKeys(site).uploadObjectPrefix, retained)) : await persistRuntimeObjects(bucket, runtime.php, UPLOADS_ROOT, uploads, currentManifest.uploads ?? [], siteStorageKeys(site).uploadObjectPrefix, retained)
   logMutationPhase(diagnosticsStartedAt, "upload-persist", retained, { files: uploadManifestFiles.length })
-  const wpContent = trace ? await trace.measure("persistence.wp-content.inventory", () => collectWpContentFiles(runtime.php)) : await collectWpContentFiles(runtime.php)
+  const wpContentInventory = trace ? await trace.measure("persistence.wp-content.inventory", () => collectWpContentFiles(runtime.php)) : await collectWpContentFiles(runtime.php)
+  // A reconstructed PHP-WASM runtime intentionally does not contain Bricks'
+  // R2-only public assets/translations. Retain their immutable manifest rows
+  // across content-only edits; a warm theme upload supplies the authoritative
+  // full inventory when those files are first introduced or changed.
+  // Warm runtimes have the real Bricks static files after an upload. Cold
+  // runtimes intentionally contain only zero-byte PHP metadata stubs. Retain
+  // the manifest rows only when the current inventory does not already carry
+  // the file; otherwise adding both copies creates duplicate manifest paths.
+  const wpContentInventoryPaths = new Set(wpContentInventory.files.map((file) => file.path))
+  const retainedR2OnlyWpContent = (currentManifest.wpContent ?? []).filter((file) => !isWorkerMaterializedWpContentPath(file.path) && !wpContentInventoryPaths.has(file.path) && !wpContentInventory.deleted.includes(file.path))
+  const wpContent = {
+    files: [...wpContentInventory.files, ...retainedR2OnlyWpContent].sort((left, right) => left.path.localeCompare(right.path)),
+    deleted: wpContentInventory.deleted,
+  }
   logMutationPhase(diagnosticsStartedAt, "wp-content-inventory", retained, { files: wpContent.files.length, bytes: sumMetadataBytes(wpContent.files), deleted: wpContent.deleted.length })
   const wpContentManifestFiles = trace ? await trace.measure("persistence.wp-content.write", () => persistRuntimeObjects(bucket, runtime.php, "/wordpress/wp-content", wpContent.files, currentManifest.wpContent ?? [], siteStorageKeys(site).wpContentObjectPrefix, retained)) : await persistRuntimeObjects(bucket, runtime.php, "/wordpress/wp-content", wpContent.files, currentManifest.wpContent ?? [], siteStorageKeys(site).wpContentObjectPrefix, retained)
   logMutationPhase(diagnosticsStartedAt, "wp-content-persist", retained, { files: wpContentManifestFiles.length })
@@ -1842,7 +1898,7 @@ function isCanonicalRelativePath(path: string): boolean {
   return path.length > 0 && !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes("..")
 }
 
-async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer, site: SiteContext, trace?: CloudflarePhaseTrace): Promise<{ markdown: RuntimeFile[]; uploads: RuntimeFile[]; wpContent: RuntimeFile[]; wpContentDeleted: string[] }> {
+async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer, site: SiteContext, trace?: CloudflarePhaseTrace): Promise<{ markdown: RuntimeFile[]; uploads: RuntimeFile[]; wpContent: RuntimeFile[]; wpContentR2OnlyPaths: string[]; wpContentDeleted: string[] }> {
   if (!isCanonicalRestorePointer(pointer, site)) throw new Error("Canonical pointer belongs to a different site namespace.")
   const readManifest = async () => {
     const manifestObject = await bucket.get(pointer.manifestKey)
@@ -1856,10 +1912,13 @@ async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer,
     return manifest
   }
   const manifest = trace ? await trace.measure("canonical.manifest.read", readManifest) : await readManifest()
-  const objectEvidence = { markdownFiles: manifest.files.length, markdownBytes: sumManifestFileBytes(manifest.files), uploadFiles: manifest.uploads?.length ?? 0, uploadBytes: sumManifestFileBytes(manifest.uploads ?? []), wpContentFiles: manifest.wpContent?.length ?? 0, wpContentBytes: sumManifestFileBytes(manifest.wpContent ?? []), wpContentDeleted: manifest.wpContentDeleted?.length ?? 0 }
+  const materializedWpContent = (manifest.wpContent ?? []).filter((file) => isWorkerMaterializedWpContentPath(file.path))
+  const wpContentR2OnlyPaths = (manifest.wpContent ?? []).filter((file) => !isWorkerMaterializedWpContentPath(file.path)).map((file) => file.path)
+  const objectEvidence = { markdownFiles: manifest.files.length, markdownBytes: sumManifestFileBytes(manifest.files), uploadFiles: manifest.uploads?.length ?? 0, uploadBytes: sumManifestFileBytes(manifest.uploads ?? []), wpContentFiles: manifest.wpContent?.length ?? 0, wpContentBytes: sumManifestFileBytes(manifest.wpContent ?? []), wpContentMaterializedFiles: materializedWpContent.length, wpContentMaterializedBytes: sumManifestFileBytes(materializedWpContent), wpContentDeleted: manifest.wpContentDeleted?.length ?? 0 }
   if (manifest.restorePack !== undefined) {
     const restorePack = manifest.restorePack
-    validateCanonicalRestorePackMetadata(restorePack, siteStorageKeys(site).root, { markdown: manifest.files, uploads: manifest.uploads ?? [], wpContent: manifest.wpContent ?? [] })
+    const runtimePackFiles = { markdown: manifest.files, uploads: [], wpContent: materializedWpContent, wpContentDeleted: manifest.wpContentDeleted ?? [] }
+    validateCanonicalRestorePackMetadata(restorePack, siteStorageKeys(site).root, runtimePackFiles)
     const fetchPack = async () => {
       const object = await bucket.get(restorePack.objectKey)
       if (!object) throw new Error("Canonical restore pack is missing.")
@@ -1867,16 +1926,17 @@ async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer,
       return new Uint8Array(await object.arrayBuffer())
     }
     const pack = trace ? await trace.measure("canonical.restore-pack.fetch", fetchPack, { requests: 1, bytes: restorePack.size }) : await fetchPack()
-    const restore = () => decodeCanonicalRestorePack(restorePack, siteStorageKeys(site).root, { markdown: manifest.files, uploads: manifest.uploads ?? [], wpContent: manifest.wpContent ?? [], wpContentDeleted: manifest.wpContentDeleted ?? [] }, pack)
-    return trace ? trace.measure("canonical.restore-pack.verify-decode", restore, { requests: 0, bytes: restorePack.decodedBytes, files: restorePack.fileCount }) : restore()
+    const restore = () => decodeCanonicalRestorePack(restorePack, siteStorageKeys(site).root, runtimePackFiles, pack)
+    const restored = trace ? await trace.measure("canonical.restore-pack.verify-decode", restore, { requests: 0, bytes: restorePack.decodedBytes, files: restorePack.fileCount }) : await restore()
+    return { markdown: restored.markdown, uploads: restored.uploads, wpContent: restored.wpContent, wpContentR2OnlyPaths, wpContentDeleted: restored.wpContentDeleted }
   }
   const hydrate = () => Promise.all([
     readManifestFiles(bucket, manifest.files, "Markdown"),
     readManifestFiles(bucket, manifest.uploads ?? [], "upload"),
-    readManifestFiles(bucket, manifest.wpContent ?? [], "wp-content"),
+    readManifestFiles(bucket, materializedWpContent, "wp-content"),
   ])
-  const [markdown, uploads, wpContent] = trace ? await trace.measure("canonical.objects.hydrate", hydrate, { ...objectEvidence, requests: manifest.files.length + (manifest.uploads?.length ?? 0) + (manifest.wpContent?.length ?? 0) }) : await hydrate()
-  return { markdown, uploads, wpContent, wpContentDeleted: manifest.wpContentDeleted ?? [] }
+  const [markdown, uploads, wpContent] = trace ? await trace.measure("canonical.objects.hydrate", hydrate, { ...objectEvidence, requests: manifest.files.length + (manifest.uploads?.length ?? 0) + materializedWpContent.length }) : await hydrate()
+  return { markdown, uploads, wpContent, wpContentR2OnlyPaths, wpContentDeleted: manifest.wpContentDeleted ?? [] }
 }
 
 function sumManifestFileBytes(files: MarkdownManifestFile[]): number { return files.reduce((total, file) => total + file.size, 0) }
@@ -1985,13 +2045,15 @@ async function persistMarkdownManifest(bucket: R2Bucket, files: MarkdownManifest
   validateUploadManifestFiles(uploads, site)
   validateWpContentManifestFiles(wpContent, site, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   validateWpContentDeletedPaths(wpContentDeleted, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
-  // Canonical objects remain authoritative; independently re-read them before deriving the pack.
-  const [markdown, restoredUploads, restoredWpContent] = await Promise.all([
+  // Canonical objects remain authoritative. The one-read runtime pack contains
+  // only data PHP needs at boot. Existing upload bodies and browser-only Bricks
+  // assets remain addressable as immutable R2 objects through the full manifest.
+  const materializedWpContent = wpContent.filter((file) => isWorkerMaterializedWpContentPath(file.path))
+  const [markdown, restoredWpContent] = await Promise.all([
     readManifestFiles(bucket, files, "Markdown"),
-    readManifestFiles(bucket, uploads, "upload"),
-    readManifestFiles(bucket, wpContent, "wp-content"),
+    readManifestFiles(bucket, materializedWpContent, "wp-content"),
   ])
-  const pack = await createCanonicalRestorePack(siteStorageKeys(site).root, { markdown, uploads: restoredUploads, wpContent: restoredWpContent, wpContentDeleted })
+  const pack = await createCanonicalRestorePack(siteStorageKeys(site).root, { markdown, uploads: [], wpContent: restoredWpContent, wpContentDeleted })
   await putImmutableBytes(bucket, pack.metadata.objectKey, pack.bytes, "application/zip")
   const manifest: MarkdownManifest = { ...pointer, files, uploads, wpContent, wpContentDeleted, restorePack: pack.metadata }
   await bucket.put(manifestKey, JSON.stringify(manifest), {
@@ -2010,7 +2072,11 @@ async function readMarkdownManifest(bucket: R2Bucket, pointer: MarkdownPointer, 
   validateUploadManifestFiles(manifest.uploads ?? [], site)
   validateWpContentManifestFiles(manifest.wpContent ?? [], site, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   validateWpContentDeletedPaths(manifest.wpContentDeleted ?? [], WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
-  if (manifest.restorePack !== undefined) validateCanonicalRestorePackMetadata(manifest.restorePack, siteStorageKeys(site).root, { markdown: manifest.files, uploads: manifest.uploads ?? [], wpContent: manifest.wpContent ?? [] })
+  if (manifest.restorePack !== undefined) validateCanonicalRestorePackMetadata(manifest.restorePack, siteStorageKeys(site).root, {
+    markdown: manifest.files,
+    uploads: [],
+    wpContent: (manifest.wpContent ?? []).filter((file) => isWorkerMaterializedWpContentPath(file.path)),
+  })
   return manifest
 }
 
@@ -2064,7 +2130,94 @@ async function packagedCanonicalMarkdownSeed(): Promise<RuntimeFile[]> {
   return files.sort((left, right) => left.path.localeCompare(right.path))
 }
 
-async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> {
+async function runBootProbe(
+  phase: string,
+  bucket: R2Bucket,
+  canonicalProbe?: { pointer: MarkdownPointer; site: SiteContext; authConstants: Record<string, string> },
+): Promise<Response> {
+  if (phase.startsWith("canonical-")) {
+    if (!canonicalProbe) return new Response("Canonical boot probe context is unavailable.", { status: 409 })
+    const streamedWordPressPhase = phase.match(/^canonical-streamed-(includes|embed|textdomain|ai-client|plugin-constants|muplugins|plugins|globals|theme|site-health-class|site-health|current-user|init|wp-loaded)$/)?.[1]
+    const initPrefix = phase.match(/^canonical-streamed-init-prefix-(\d{1,2})$/)?.[1]
+    if (phase === "canonical-streamed-wordpress" || phase === "canonical-streamed-init-list" || phase === "canonical-streamed-wp-loaded-list" || initPrefix || streamedWordPressPhase) {
+      const runtime = await bootRuntime(bucket, canonicalProbe.pointer, canonicalProbe.site.origin, canonicalProbe.authConstants, false, canonicalProbe.site)
+      try {
+        const code = phase === "canonical-streamed-init-list"
+          ? wordpressInitCallbacksProbeCode()
+          : phase === "canonical-streamed-wp-loaded-list"
+            ? wordpressHookCallbacksProbeCode("wp_loaded")
+          : initPrefix
+            ? wordpressInitPrefixProbeCode(Number(initPrefix))
+          : streamedWordPressPhase
+            ? wordpressProbeCode(`mdi-${streamedWordPressPhase}`)
+            : "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => site_url(), 'wordpressVersion' => get_bloginfo('version'), 'theme' => wp_get_theme()->get('Name'), 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)]);"
+        const loaded = (await runtime.php.run({ code })).text.trim()
+        return probeResponse(phase, JSON.parse(loaded) as Record<string, string>)
+      } finally {
+        await discardRuntime(runtime, canonicalProbe.site)
+      }
+    }
+    const revision = await readCanonicalRevision(bucket, canonicalProbe.pointer, canonicalProbe.site)
+    const evidence = {
+      markdownFiles: revision.markdown.length,
+      markdownBytes: sumRuntimeFileBytes(revision.markdown),
+      uploadFiles: revision.uploads.length,
+      uploadBytes: sumRuntimeFileBytes(revision.uploads),
+      wpContentFiles: revision.wpContent.length,
+      wpContentBytes: sumRuntimeFileBytes(revision.wpContent),
+      wpContentR2OnlyFiles: revision.wpContentR2OnlyPaths.length,
+    }
+    if (phase === "canonical-hydrate") return probeResponse(phase, evidence)
+    const wordpressPhase = phase.match(/^canonical-(includes|embed|textdomain|ai-client|plugin-constants|muplugins|plugins|globals|theme|site-health-class|site-health|current-user|init|wp-loaded)$/)?.[1]
+    const directWpLoadedList = phase === "canonical-wp-loaded-list"
+    const includeUploads = phase === "canonical-markdown-uploads" || phase === "canonical-all-files" || phase === "canonical-wordpress" || directWpLoadedList || Boolean(wordpressPhase)
+    const includeWpContent = phase === "canonical-markdown-wpcontent" || phase === "canonical-all-files" || phase === "canonical-wordpress" || directWpLoadedList || Boolean(wordpressPhase)
+    if (!["canonical-markdown", "canonical-markdown-uploads", "canonical-markdown-wpcontent", "canonical-all-files", "canonical-wordpress"].includes(phase) && !directWpLoadedList && !wordpressPhase) {
+      return new Response(`Unknown canonical boot probe phase: ${phase}`, { status: 400 })
+    }
+    const runtime = await bootWordPressRuntime(
+      "do-not-attempt-installing",
+      true,
+      true,
+      undefined,
+      revision.markdown,
+      new Uint8Array(markdownPrimaryBootstrapIndex),
+      canonicalProbe.site.origin,
+      canonicalProbe.authConstants,
+      bucket,
+      true,
+      undefined,
+      includeWpContent ? revision.wpContent : undefined,
+      revision.wpContentDeleted,
+      false,
+      undefined,
+      includeWpContent ? revision.wpContentR2OnlyPaths : [],
+    )
+    // The runtime has copied these bytes into PHP MEMFS. Do not retain a
+    // second JS-side copy while WordPress and Bricks initialize.
+    revision.markdown = []
+    revision.uploads = []
+    revision.wpContent = []
+    revision.wpContentR2OnlyPaths = []
+    revision.wpContentDeleted = []
+    try {
+      if (directWpLoadedList) {
+        const listed = (await runtime.php.run({ code: wordpressHookCallbacksProbeCode("wp_loaded") })).text.trim()
+        return probeResponse(phase, { ...evidence, ...JSON.parse(listed) as Record<string, string> })
+      }
+      if (wordpressPhase) {
+        const stopped = (await runtime.php.run({ code: wordpressProbeCode(`mdi-${wordpressPhase}`) })).text.trim()
+        return probeResponse(phase, { ...evidence, ...JSON.parse(stopped) as Record<string, string> })
+      }
+      if (phase === "canonical-wordpress") {
+        const loaded = (await runtime.php.run({ code: "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => site_url(), 'wordpressVersion' => get_bloginfo('version'), 'theme' => wp_get_theme()->get('Name'), 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)]);" })).text.trim()
+        return probeResponse(phase, { ...evidence, ...JSON.parse(loaded) as Record<string, string> })
+      }
+      return probeResponse(phase, { ...evidence, phpVersion: (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim() })
+    } finally {
+      runtime.php.exit()
+    }
+  }
   if (phase === "wordpress-archive" || phase === "sqlite-archive") {
     const archiveBytes = phase === "wordpress-archive"
       ? (await readWordPressRuntimeArtifact(bucket)).byteLength
@@ -2279,6 +2432,76 @@ file_put_contents($settings_path, str_replace($needle, $replacement, $settings))
 require '/wordpress/wp-load.php';`
 }
 
+function wordpressInitCallbacksProbeCode(): string {
+  return `<?php
+$settings_path = '/wordpress/wp-settings.php';
+$settings = file_get_contents($settings_path);
+$needle = "do_action( 'init' );";
+if (substr_count($settings, $needle) !== 1) throw new Exception('WordPress init callback probe needle not found.');
+file_put_contents($settings_path, str_replace($needle, 'return;', $settings));
+require '/wordpress/wp-load.php';
+$callbacks = array();
+foreach (($GLOBALS['wp_filter']['init']->callbacks ?? array()) as $priority => $entries) {
+    foreach ($entries as $entry) {
+        $fn = $entry['function'];
+        if (is_array($fn)) $name = (is_object($fn[0]) ? get_class($fn[0]) : (string) $fn[0]) . '::' . (string) $fn[1];
+        elseif (is_string($fn)) $name = $fn;
+        elseif ($fn instanceof Closure) $name = 'Closure';
+        else $name = gettype($fn);
+        $callbacks[] = array('priority' => (int) $priority, 'name' => $name);
+    }
+}
+echo json_encode(array('callbacks' => $callbacks, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));`
+}
+
+function wordpressInitPrefixProbeCode(limit: number): string {
+  if (!Number.isSafeInteger(limit) || limit < 0 || limit > 99) throw new Error("WordPress init prefix probe limit is invalid.")
+  return `<?php
+$settings_path = '/wordpress/wp-settings.php';
+$settings = file_get_contents($settings_path);
+$needle = "do_action( 'init' );";
+if (substr_count($settings, $needle) !== 1) throw new Exception('WordPress init prefix probe needle not found.');
+file_put_contents($settings_path, str_replace($needle, 'return;', $settings));
+require '/wordpress/wp-load.php';
+$remaining = ${limit};
+foreach (($GLOBALS['wp_filter']['init']->callbacks ?? array()) as $priority => $entries) {
+    if ($remaining <= 0) {
+        unset($GLOBALS['wp_filter']['init']->callbacks[$priority]);
+        continue;
+    }
+    if (count($entries) > $remaining) {
+        $GLOBALS['wp_filter']['init']->callbacks[$priority] = array_slice($entries, 0, $remaining, true);
+        $remaining = 0;
+    } else {
+        $remaining -= count($entries);
+    }
+do_action('init');
+echo json_encode(array('executedCallbacks' => ${limit}, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));`
+}
+
+function wordpressHookCallbacksProbeCode(hook: "wp_loaded"): string {
+  const needle = `do_action( '${hook}' );`
+  return `<?php
+$settings_path = '/wordpress/wp-settings.php';
+$settings = file_get_contents($settings_path);
+$needle = ${JSON.stringify(needle)};
+if (substr_count($settings, $needle) !== 1) throw new Exception('WordPress hook callback probe needle not found.');
+file_put_contents($settings_path, str_replace($needle, 'return;', $settings));
+require '/wordpress/wp-load.php';
+$callbacks = array();
+foreach (($GLOBALS['wp_filter'][${JSON.stringify(hook)}]->callbacks ?? array()) as $priority => $entries) {
+    foreach ($entries as $entry) {
+        $fn = $entry['function'];
+        if (is_array($fn)) $name = (is_object($fn[0]) ? get_class($fn[0]) : (string) $fn[0]) . '::' . (string) $fn[1];
+        elseif (is_string($fn)) $name = $fn;
+        elseif ($fn instanceof Closure) $name = 'Closure';
+        else $name = gettype($fn);
+        $callbacks[] = array('priority' => (int) $priority, 'name' => $name);
+    }
+}
+echo json_encode(array('hook' => ${JSON.stringify(hook)}, 'callbacks' => $callbacks, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));`
+}
+
 async function bootWordPressRuntime(
   wordpressInstallMode: WordPressInstallMode = "install-from-existing-files",
   includeSqlite = true,
@@ -2287,7 +2510,7 @@ async function bootWordPressRuntime(
   markdownFiles?: RuntimeFile[],
   markdownIndexSeed?: Uint8Array,
   siteUrl = PROBE_SITE_URL,
-  authConstants: Partial<Record<WordPressAuthConstant, string>> = {},
+  authConstants: Record<string, string> = {},
   runtimeBucket?: R2Bucket,
   shouldPatchCanonicalRuntimePoliciesAtInit = false,
   uploadFiles?: RuntimeFile[],
@@ -2295,6 +2518,8 @@ async function bootWordPressRuntime(
   wpContentDeleted: string[] = [],
   includeWebsiteImporter = false,
   trace?: CloudflarePhaseTrace,
+  r2OnlyWpContentPaths: string[] = [],
+  canonicalHydration?: CanonicalHydrationPlan,
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   if (includeSqlite && !runtimeBucket) throw new Error("SQLite integration artifact requires WORDPRESS_STATE_BUCKET.")
   validateWpContentDeletedPaths(wpContentDeleted, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
@@ -2307,8 +2532,11 @@ async function bootWordPressRuntime(
       CONCATENATE_SCRIPTS: false,
       DISABLE_WP_CRON: true,
       SCRIPT_DEBUG: false,
+      WP_DEBUG: false,
+      WP_DEBUG_DISPLAY: false,
+      WP_DEBUG_LOG: false,
       ...authConstants,
-      ...(markdownFiles ? {
+      ...(markdownFiles || canonicalHydration ? {
         MARKDOWN_DB_CONTENT_DIR: MARKDOWN_ROOT,
         MARKDOWN_DB_EXCLUDED_TYPES: "revision,auto-draft,nav_menu_item,customize_changeset,oembed_cache,wp_navigation,wp_global_styles,wp_template,wp_template_part",
         MARKDOWN_DB_INDEX_PATH: MARKDOWN_INDEX_PATH,
@@ -2322,25 +2550,54 @@ async function bootWordPressRuntime(
     // Browser cookies are carried by the Worker Fetch request; Playground's
     // internal store would overwrite that header after an isolate restart.
     cookieStore: false,
-    hooks: streamWordPressFiles || databaseSeed || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || includeWebsiteImporter ? {
-      beforeWordPressFiles: streamWordPressFiles || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || includeWebsiteImporter ? async (php: PHP) => {
+    hooks: streamWordPressFiles || databaseSeed || markdownFiles || canonicalHydration || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || r2OnlyWpContentPaths.length || includeWebsiteImporter ? {
+      beforeWordPressFiles: streamWordPressFiles || markdownFiles || canonicalHydration || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || r2OnlyWpContentPaths.length || includeWebsiteImporter ? async (php: PHP) => {
+        const markdownHydrationFiles = markdownFiles
+        const uploadHydrationFiles = uploadFiles
+        const wpContentHydrationFiles = wpContentFiles
         if (streamWordPressFiles) trace ? await trace.measure("runtime.archive.wordpress.fetch-verify-extract", () => materializeWordPressServerFiles(php, runtimeBucket)) : await materializeWordPressServerFiles(php, runtimeBucket)
         if (websiteImporterZip) trace ? await trace.measure("runtime.archive.component.materialize", async () => materializeRuntimeArchiveComponent(php, await websiteImporterZip, WEBSITE_IMPORTER_COMPONENT)) : await materializeRuntimeArchiveComponent(php, await websiteImporterZip, WEBSITE_IMPORTER_COMPONENT)
-        if (markdownFiles) {
+        if (markdownHydrationFiles || canonicalHydration) {
           if (trace) await trace.measure("runtime.archive.mdi.extract", () => materializeMarkdownDatabaseIntegration(php))
           else await materializeMarkdownDatabaseIntegration(php)
           materializeCanonicalChangeAdapter(php)
-          if (trace) await trace.measure("canonical.hydration.markdown", async () => materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles), { files: markdownFiles.length, bytes: sumRuntimeFileBytes(markdownFiles) })
-          else materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
+          if (markdownHydrationFiles) {
+            if (trace) await trace.measure("canonical.hydration.markdown", async () => materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownHydrationFiles), { files: markdownHydrationFiles.length, bytes: sumRuntimeFileBytes(markdownHydrationFiles) })
+            else materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownHydrationFiles)
+          } else if (canonicalHydration) {
+            const hydrate = () => materializeManifestFilesBatched(runtimeBucket!, php, MARKDOWN_ROOT, canonicalHydration.markdown, "Markdown")
+            if (trace) await trace.measure("canonical.hydration.markdown", hydrate, { files: canonicalHydration.markdown.length, bytes: sumManifestFileBytes(canonicalHydration.markdown) })
+            else await hydrate()
+          }
           if (markdownIndexSeed) php.writeFile(MARKDOWN_RESOLVED_INDEX_PATH, markdownIndexSeed)
         }
-        if (wpContentFiles?.length) trace ? await trace.measure("canonical.hydration.wp-content", async () => materializeRuntimeFiles(php, "/wordpress/wp-content", wpContentFiles), { files: wpContentFiles.length, bytes: sumRuntimeFileBytes(wpContentFiles) }) : materializeRuntimeFiles(php, "/wordpress/wp-content", wpContentFiles)
+        if (wpContentHydrationFiles?.length) trace ? await trace.measure("canonical.hydration.wp-content", async () => materializeRuntimeFiles(php, "/wordpress/wp-content", wpContentHydrationFiles), { files: wpContentHydrationFiles.length, bytes: sumRuntimeFileBytes(wpContentHydrationFiles) }) : materializeRuntimeFiles(php, "/wordpress/wp-content", wpContentHydrationFiles)
+        else if (canonicalHydration?.wpContent.length) {
+          const hydrate = () => materializeManifestFilesBatched(runtimeBucket!, php, "/wordpress/wp-content", canonicalHydration.wpContent, "wp-content")
+          if (trace) await trace.measure("canonical.hydration.wp-content", hydrate, { files: canonicalHydration.wpContent.length, bytes: sumManifestFileBytes(canonicalHydration.wpContent) })
+          else await hydrate()
+        }
+        if (r2OnlyWpContentPaths.length) materializeBricksAssetStubs(php, r2OnlyWpContentPaths)
         if (wpContentDeleted.length) trace ? await trace.measure("canonical.hydration.tombstones", () => materializeWpContentTombstones(php, wpContentDeleted), { count: wpContentDeleted.length }) : await materializeWpContentTombstones(php, wpContentDeleted)
-        if (uploadFiles?.length) trace ? await trace.measure("canonical.hydration.uploads", async () => materializeRuntimeFiles(php, UPLOADS_ROOT, uploadFiles), { files: uploadFiles.length, bytes: sumRuntimeFileBytes(uploadFiles) }) : materializeRuntimeFiles(php, UPLOADS_ROOT, uploadFiles)
+        if (uploadHydrationFiles?.length) trace ? await trace.measure("canonical.hydration.uploads", async () => materializeRuntimeFiles(php, UPLOADS_ROOT, uploadHydrationFiles), { files: uploadHydrationFiles.length, bytes: sumRuntimeFileBytes(uploadHydrationFiles) }) : materializeRuntimeFiles(php, UPLOADS_ROOT, uploadHydrationFiles)
+        else if (canonicalHydration?.uploads.length) {
+          const hydrate = () => materializeManifestFilesBatched(runtimeBucket!, php, UPLOADS_ROOT, canonicalHydration.uploads, "upload")
+          if (trace) await trace.measure("canonical.hydration.uploads", hydrate, { files: canonicalHydration.uploads.length, bytes: sumManifestFileBytes(canonicalHydration.uploads) })
+          else await hydrate()
+        }
         if (shouldPatchCanonicalRuntimePoliciesAtInit) {
           patchCanonicalRuntimePoliciesAtInit(php)
           patchCanonicalThemeJsonCustomCss(php)
+          patchBricksCloudflareRuntime(php)
         }
+        // These buffers have been copied into PHP MEMFS. The request handler
+        // retains this hook, so explicitly sever the references before the
+        // active theme loads and consumes the remainder of the 128 MB isolate.
+        markdownFiles = undefined
+        uploadFiles = undefined
+        wpContentFiles = undefined
+        wpContentDeleted = []
+        r2OnlyWpContentPaths = []
       } : undefined,
       beforeDatabaseSetup: databaseSeed ? async (php: PHP) => {
         const setup = async () => { php.mkdir("/wordpress/wp-content/database"); php.writeFile(DATABASE_PATH, databaseSeed) }
@@ -2382,6 +2639,36 @@ function materializeRuntimeFiles(php: PHP, root: string, files: RuntimeFile[]): 
   }
 }
 
+async function materializeManifestFilesBatched(
+  bucket: R2Bucket,
+  php: PHP,
+  root: string,
+  files: MarkdownManifestFile[],
+  label: string,
+  batchSize = 24,
+): Promise<void> {
+  for (let offset = 0; offset < files.length; offset += batchSize) {
+    const hydrated = await readManifestFiles(bucket, files.slice(offset, offset + batchSize), label)
+    materializeRuntimeFiles(php, root, hydrated)
+  }
+}
+
+/**
+ * Bricks computes cache-busting versions with filemtime() while its browser
+ * assets are served straight from R2. Give PHP zero-byte filesystem entries
+ * for those asset paths only; the request router still serves the immutable
+ * R2 bytes, and the persistence collector excludes these known placeholders.
+ */
+function materializeBricksAssetStubs(php: PHP, paths: string[]): void {
+  for (const path of paths) {
+    if (!path.startsWith("themes/bricks/assets/")) continue
+    const absolute = `/wordpress/wp-content/${path}`
+    const directory = absolute.slice(0, absolute.lastIndexOf("/"))
+    if (!php.isDir(directory)) php.mkdir(directory)
+    php.writeFile(absolute, new Uint8Array())
+  }
+}
+
 function sumRuntimeFileBytes(files: RuntimeFile[]): number {
   return files.reduce((total, file) => total + file.bytes.byteLength, 0)
 }
@@ -2401,9 +2688,11 @@ foreach ($paths as $relative) {
 function patchCanonicalRuntimePoliciesAtInit(php: PHP): void {
   const settingsPath = "/wordpress/wp-settings.php"
   const needle = "do_action( 'init' );"
+  const siteHealthNeedle = "WP_Site_Health::get_instance();"
   const settings = new TextDecoder().decode(php.readFileAsBuffer(settingsPath))
   const firstNeedle = settings.indexOf(needle)
-  if (firstNeedle === -1 || firstNeedle !== settings.lastIndexOf(needle)) {
+  const firstSiteHealthNeedle = settings.indexOf(siteHealthNeedle)
+  if (firstNeedle === -1 || firstNeedle !== settings.lastIndexOf(needle) || firstSiteHealthNeedle === -1 || firstSiteHealthNeedle !== settings.lastIndexOf(siteHealthNeedle)) {
     throw new Error("WordPress canonical runtime policy patch needle was not uniquely found.")
   }
   const replacement = `if ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) {
@@ -2415,12 +2704,81 @@ function patchCanonicalRuntimePoliciesAtInit(php: PHP): void {
 add_filter( 'markdown_database_integration_ephemeral_option_names', static function ( $names ) {
 	return array_values( array_diff( $names, array( 'cron' ) ) );
 } );
+// Bricks stores its native builder document, template role/conditions, and
+// per-document settings in protected post meta. MDI excludes underscore keys
+// unless they are explicitly declared portable, so preserve Bricks' complete
+// document envelope in the canonical Markdown revision.
+add_filter( 'markdown_db_internal_meta_allowlist', static function ( $keys ) {
+	return array_values( array_unique( array_merge( $keys, array(
+		'_bricks_page_content_2',
+		'_bricks_page_header_2',
+		'_bricks_page_footer_2',
+		'_bricks_page_settings',
+		'_bricks_template_settings',
+		'_bricks_template_type',
+		'_bricks_mega_menu_template_id',
+		'_wp_attached_file',
+		'_wp_attachment_metadata',
+		'_wp_attachment_backup_sizes',
+		'_wp_attachment_image_alt',
+	) ) ) );
+} );
 // Rewrite rules are derived for each runtime; keep them out of canonical MDI state.
 add_filter( 'pre_update_option_rewrite_rules', static function ( $value, $old_value ) {
 	return $old_value;
 }, PHP_INT_MAX, 2 );
+// The Cloudflare Bricks profile intentionally exposes a reviewed native
+// element palette. It covers the structures used by the governed themes while
+// avoiding eager compilation of every specialty and commerce element.
+add_filter( 'bricks/builder/elements', static function ( $elements ) {
+	$allowed = array(
+		'container', 'section', 'block', 'div', 'heading', 'text-basic', 'text',
+		'text-link', 'button', 'icon', 'image', 'form', 'svg',
+	);
+	return array_values( array_intersect( $elements, $allowed ) );
+}, PHP_INT_MIN );
+// Bricks owns page composition in this profile. WordPress 7 otherwise compiles
+// roughly ninety server-rendered Gutenberg block registrations during every
+// dynamic boot, exhausting the isolate before Bricks can finish init.
+$wp_codebox_bricks_block_callbacks = $GLOBALS['wp_filter']['init']->callbacks ?? array();
+foreach ( $wp_codebox_bricks_block_callbacks as $priority => $callbacks ) {
+	foreach ( $callbacks as $callback ) {
+		$function = $callback['function'];
+		if ( is_string( $function ) && (
+			str_starts_with( $function, 'register_block_core_' ) ||
+			in_array( $function, array(
+				'_register_core_block_patterns_and_categories',
+				'wp_register_core_block_metadata_collection',
+				'register_core_block_types_from_metadata',
+				'_register_theme_block_patterns',
+				'register_legacy_post_comments_block',
+				'register_block_core_footnotes_post_meta',
+			), true )
+		) ) {
+			remove_action( 'init', $function, $priority );
+		}
+		if ( is_array( $function ) && ( $function[0] ?? null ) instanceof \\Bricks\\Integrations\\Block_Editor && ( $function[1] ?? null ) === 'register_blocks' ) {
+			remove_action( 'init', $function, $priority );
+		}
+	}
+}
+unset( $wp_codebox_bricks_block_callbacks );
+if ( ! wp_doing_ajax() ) {
+	foreach ( ( $GLOBALS['wp_filter']['wp_loaded']->callbacks ?? array() ) as $priority => $callbacks ) {
+		foreach ( $callbacks as $callback ) {
+			$function = $callback['function'];
+			if ( is_array( $function ) && ( $function[0] ?? null ) instanceof \\Bricks\\Database && ( $function[1] ?? null ) === 'set_ajax_page_data' ) {
+				remove_action( 'wp_loaded', $function, $priority );
+			}
+		}
+	}
+}
 ${needle}`
-  php.writeFile(settingsPath, new TextEncoder().encode(`${settings.slice(0, firstNeedle)}${replacement}${settings.slice(firstNeedle + needle.length)}`))
+  const withCanonicalInit = `${settings.slice(0, firstNeedle)}${replacement}${settings.slice(firstNeedle + needle.length)}`
+  const siteHealthReplacement = `if ( ! defined( 'DISABLE_WP_CRON' ) || ! DISABLE_WP_CRON ) {
+	WP_Site_Health::get_instance();
+}`
+  php.writeFile(settingsPath, new TextEncoder().encode(withCanonicalInit.replace(siteHealthNeedle, siteHealthReplacement)))
 }
 
 function patchCanonicalThemeJsonCustomCss(php: PHP): void {
@@ -2435,6 +2793,76 @@ function patchCanonicalThemeJsonCustomCss(php: PHP): void {
 
 `
   php.writeFile(path, new TextEncoder().encode(`${source.slice(0, index)}${fastPath}${source.slice(index)}`))
+}
+
+function patchBricksCloudflareRuntime(php: PHP): void {
+  const path = "/wordpress/wp-content/themes/bricks/includes/init.php"
+  if (!php.isDir("/wordpress/wp-content/themes/bricks/includes")) return
+  let source = new TextDecoder().decode(php.readFileAsBuffer(path))
+  const patchedMarkers = [
+    "$is_interactive = is_admin() || bricks_is_builder() || wp_doing_ajax()",
+    "if ( defined( 'WP_CLI' ) && WP_CLI ) $this->cli = new CLI();",
+    "if ( $is_interactive ) $this->license = new License();",
+    "if ( class_exists( '\\\\WooCommerce', false ) )",
+    "if ( is_admin() || bricks_is_builder() )",
+    "if ( $is_interactive ) $this->block_editor = new Integrations\\Block_Editor();",
+    "if ( $is_interactive ) $this->api = new Api();",
+    "if ( $is_interactive ) $this->heartbeat = new Heartbeat();",
+  ]
+  if (source.includes(patchedMarkers[0])) {
+    if (!patchedMarkers.every((marker) => source.includes(marker))) throw new Error("Bricks Cloudflare runtime patch is only partially applied.")
+    return
+  }
+  const replaceUnique = (needle: string, replacement: string): void => {
+    const index = source.indexOf(needle)
+    if (index === -1 || index !== source.lastIndexOf(needle)) throw new Error("Bricks Cloudflare runtime patch needle was not uniquely found.")
+    source = `${source.slice(0, index)}${replacement}${source.slice(index + needle.length)}`
+  }
+  replaceUnique(
+    "\tpublic function init() {\n\t\tCompatibility::register();",
+    "\tpublic function init() {\n\t\t$is_interactive = is_admin() || bricks_is_builder() || wp_doing_ajax() || ( defined( 'REST_REQUEST' ) && REST_REQUEST );\n\t\tCompatibility::register();",
+  )
+  replaceUnique(
+    "\t\t$this->cli          = new CLI();",
+    "\t\tif ( defined( 'WP_CLI' ) && WP_CLI ) $this->cli = new CLI();",
+  )
+  replaceUnique(
+    "\t\t$this->license      = new License();\n\t\t$this->setup        = new Setup();\n\t\t$this->search       = new Search();",
+    "\t\tif ( $is_interactive ) $this->license = new License();\n\t\t$this->setup = new Setup();\n\t\tif ( $is_interactive ) $this->search = new Search();",
+  )
+  replaceUnique(
+    "\t\t$this->conditions = new Conditions();\n\n\t\t$this->auth_redirects = new Auth_Redirects();",
+    "\t\tif ( $is_interactive ) {\n\t\t\t$this->conditions = new Conditions();\n\t\t\t$this->auth_redirects = new Auth_Redirects();\n\t\t}",
+  )
+  replaceUnique(
+    "\t\t$this->woocommerce = new Woocommerce();\n\n\t\t// Woo Setup Wizard (@since 2.4)\n\t\t$this->woo_setup_wizard = new Woo_Setup_Wizard();",
+    "\t\t// Load commerce only when WooCommerce is active.\n\t\tif ( class_exists( '\\\\WooCommerce', false ) ) {\n\t\t\t$this->woocommerce = new Woocommerce();\n\t\t\t$this->woo_setup_wizard = new Woo_Setup_Wizard();\n\t\t}",
+  )
+  replaceUnique(
+    "\t\t$this->media_browser_bulk   = new Media_Browser_Bulk();\n\t\t$this->media_browser_health = new Media_Browser_Health();\n\t\t$this->media_browser_query  = new Media_Browser_Query();",
+    "\t\t// Frontend requests read immutable R2 media directly. Builder and wp-admin\n\t\t// retain the complete native media tooling.\n\t\tif ( is_admin() || bricks_is_builder() ) {\n\t\t\t$this->media_browser_bulk   = new Media_Browser_Bulk();\n\t\t\t$this->media_browser_health = new Media_Browser_Health();\n\t\t\t$this->media_browser_query  = new Media_Browser_Query();\n\t\t}",
+  )
+  replaceUnique(
+    "\t\t$this->ajax                 = new Ajax();\n\t\t$this->svg                  = new Svg();\n\t\t$this->templates            = new Templates();\n\t\t$this->settings             = new Settings();",
+    "\t\tif ( $is_interactive ) {\n\t\t\t$this->ajax = new Ajax();\n\t\t\t$this->svg = new Svg();\n\t\t\t$this->settings = new Settings();\n\t\t}\n\t\t$this->templates = new Templates();",
+  )
+  replaceUnique(
+    "\t\t$this->polylang          = new Integrations\\Polylang\\Polylang();\n\t\t$this->wpml              = new Integrations\\Wpml\\Wpml();\n\t\t$this->instagram         = new Integrations\\Instagram\\Instagram();\n\t\t$this->rank_math         = new Integrations\\Rank_Math\\Rank_Math();\n\t\t$this->yoast             = new Integrations\\Yoast\\Yoast();",
+    "\t\tif ( defined( 'POLYLANG_VERSION' ) ) $this->polylang = new Integrations\\Polylang\\Polylang();\n\t\tif ( defined( 'ICL_SITEPRESS_VERSION' ) ) $this->wpml = new Integrations\\Wpml\\Wpml();\n\t\t$this->instagram = new Integrations\\Instagram\\Instagram();\n\t\tif ( defined( 'RANK_MATH_VERSION' ) ) $this->rank_math = new Integrations\\Rank_Math\\Rank_Math();\n\t\tif ( defined( 'WPSEO_VERSION' ) ) $this->yoast = new Integrations\\Yoast\\Yoast();",
+  )
+  replaceUnique(
+    "\t\t$this->block_editor      = new Integrations\\Block_Editor();",
+    "\t\tif ( $is_interactive ) $this->block_editor = new Integrations\\Block_Editor();",
+  )
+  replaceUnique(
+    "\t\t$this->api = new Api();",
+    "\t\tif ( $is_interactive ) $this->api = new Api();",
+  )
+  replaceUnique(
+    "\t\t$this->heartbeat = new Heartbeat();",
+    "\t\tif ( $is_interactive ) $this->heartbeat = new Heartbeat();",
+  )
+  php.writeFile(path, new TextEncoder().encode(source))
 }
 
 function collectRuntimeFiles(php: PHP, root: string, paths?: string[]): RuntimeFile[] {
@@ -2514,6 +2942,7 @@ foreach (array('plugins', 'themes', 'languages', 'mu-plugins') as $root) {
             if (str_ends_with($runtime_owned_path, '/') ? str_starts_with($path, $runtime_owned_path) : ($path === $runtime_owned_path || str_starts_with($path, $runtime_owned_path . '/'))) continue 2;
         }
         $size = $file->getSize();
+        if (str_starts_with($path, 'themes/bricks/assets/') && $size === 0) continue;
         $total += $size;
         if ($size > ${MAX_WP_CONTENT_FILE_BYTES} || $total > ${MAX_WP_CONTENT_TOTAL_BYTES} || count($files) >= ${MAX_WP_CONTENT_FILES}) {
             throw new RuntimeException('Canonical wp-content files exceed their budget.');
@@ -2586,7 +3015,18 @@ async function materializeMarkdownDatabaseIntegration(php: PHP): Promise<void> {
     const { done, value: entry } = await reader.read()
     if (done) break
     const relative = entry.name
-    const bytes = new Uint8Array(await entry.arrayBuffer())
+    let bytes = new Uint8Array(await entry.arrayBuffer())
+    // MySQL exposes SELECT DISTINCT(table.column) under the column name;
+    // SQLite exposes the expression. Bricks' native dynamic-data provider
+    // legitimately reads $row->meta_key from that query. Adapt the MDI driver
+    // at materialization time so it preserves WordPress' MySQL result shape.
+    if (relative === "inc/class-wp-markdown-driver.php") {
+      const source = new TextDecoder().decode(bytes)
+      const marker = "\tpublic function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {\n"
+      const insertion = `${marker}\t\t// The Cloudflare coordinator already serializes each site's PHP\n\t\t// request under a fenced lease. Map MySQL session-lock probes to a\n\t\t// successful scalar result so Bricks' guarded ability transactions can\n\t\t// run on SQLite without weakening the outer site mutation fence.\n\t\tif ( preg_match( '/^\\s*SELECT\\s+(?:GET_LOCK|RELEASE_LOCK)\\s*\\(/i', $query ) ) {\n\t\t\t$query = 'SELECT 1 AS lock_status';\n\t\t}\n\n\t\t$query = preg_replace_callback(\n\t\t\t'/^\\s*SELECT\\s+DISTINCT\\s*\\(\\s*((?:\`[^\`]+\`|[A-Za-z0-9_]+)\\.(?:\`[^\`]+\`|[A-Za-z0-9_]+))\\s*\\)(?!\\s+AS\\b)/i',\n\t\t\tstatic function ( array $matches ): string {\n\t\t\t\t$parts  = explode( '.', $matches[1] );\n\t\t\t\t$column = trim( (string) end( $parts ), '\`' );\n\t\t\t\treturn 'SELECT DISTINCT(' . $matches[1] . ') AS \`' . $column . '\`';\n\t\t\t},\n\t\t\t$query\n\t\t);\n\n`
+      if (!source.includes(marker)) throw new Error("MDI driver no longer exposes its expected query method.")
+      bytes = new TextEncoder().encode(source.replace(marker, insertion))
+    }
     const destination = `/wordpress/wp-content/plugins/markdown-database-integration/${relative}`
     php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
     php.writeFile(destination, bytes)

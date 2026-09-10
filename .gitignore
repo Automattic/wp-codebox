@@ -12,3 +12,6 @@ scripts/uploads/
 *.tsbuildinfo
 .DS_Store
 .wrangler/
+# Disposable local Cloudflare/Miniflare state and Python bytecode.
+packages/runtime-cloudflare/.bricks-local-state-*/
+packages/runtime-cloudflare/scripts/__pycache__/

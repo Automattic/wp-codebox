@@ -10,7 +10,10 @@ const local = args.includes("--local")
 const remote = args.includes("--remote")
 const persistIndex = args.indexOf("--persist-to")
 const persistTo = persistIndex === -1 ? undefined : args[persistIndex + 1]
+const bucketIndex = args.indexOf("--bucket")
+const bucket = bucketIndex === -1 ? "wp-codebox-runtime-chubes" : args[bucketIndex + 1]
 if (local === remote || (local && !persistTo)) throw new Error("Use exactly one of --local --persist-to <directory> or --remote.")
+if (!bucket || !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket)) throw new Error("--bucket must be a valid R2 bucket name.")
 
 const manifest = JSON.parse(await readFile(resolve(packageRoot, "assets/wordpress-runtime-artifact.json"), "utf8"))
 const archive = await readFile(resolve(packageRoot, "artifacts/cloudflare-wordpress-runtime-corpus.zip"))
@@ -35,7 +38,7 @@ for (const artifact of [
   { key: sqliteManifest.key, size: sqliteManifest.archive.size, file: resolve(packageRoot, "artifacts/cloudflare-sqlite-database-integration.zip") },
   { key: websiteImporterManifest.key, size: websiteImporterManifest.archive.size, file: resolve(packageRoot, "artifacts/cloudflare-website-importer.zip") },
 ]) {
-  const command = ["r2", "object", "put", `wp-codebox-runtime-chubes/${artifact.key}`, "--file", artifact.file, local ? "--local" : "--remote"]
+  const command = ["r2", "object", "put", `${bucket}/${artifact.key}`, "--file", artifact.file, local ? "--local" : "--remote"]
   if (persistTo) command.push("--persist-to", persistTo)
   await new Promise((resolve, reject) => {
     const child = spawn("wrangler", command, { cwd: packageRoot, env: childEnvironment(), stdio: "inherit" })

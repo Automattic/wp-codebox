@@ -37,7 +37,12 @@ function siteCredential(rootCredential, siteId, purpose) {
 }
 
 try {
-  await run("npm", ["run", "generate:wordpress-runtime-corpus"])
+  // The Bricks feasibility harness reuses a freshly generated, checked
+  // runtime corpus when no local PHP CLI is available for the optional seed
+  // generator. Normal upstream gates retain their full generation step.
+  if (!process.env.WP_CODEBOX_REUSE_RUNTIME_CORPUS) {
+    await run("npm", ["run", "generate:wordpress-runtime-corpus"])
+  }
   await run("npm", ["run", "provision:wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   const staticArtifactImport = await provisionStaticArtifact()
   await startWorker(!publicProvisioning && coordinator === "durable-object", publicProvisioning ? controlWranglerConfig : executionWranglerConfig)

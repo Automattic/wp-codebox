@@ -62,7 +62,6 @@
     "@automattic/wp-codebox-core",
     "@php-wasm/stream-compression",
     "@php-wasm/universal",
-    "@php-wasm/web-8-5",
     "@wp-playground/wordpress",
     "patch-package"
   ],

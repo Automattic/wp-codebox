@@ -1,9 +1,9 @@
 {
   "schema": "wp-codebox/wordpress-runtime-artifact/v1",
-  "key": "runtime/wordpress/279477d490700affba70acc43055045878083358096249314fae4e163dc37502.zip",
+  "key": "runtime/wordpress/3c3b69a77f2663f4c52a55762a300207158be81e032c46b9e3a9210d3ab8efc8.zip",
   "archive": {
-    "sha256": "279477d490700affba70acc43055045878083358096249314fae4e163dc37502",
-    "size": 5798703
+    "sha256": "3c3b69a77f2663f4c52a55762a300207158be81e032c46b9e3a9210d3ab8efc8",
+    "size": 5810263
   },
   "source": {
     "url": "https://downloads.wordpress.org/release/wordpress-7.0.2.zip",

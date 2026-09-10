@@ -21,6 +21,8 @@ export interface PhaseTraceSummary {
   phases: PhaseTraceEntry[]
 }
 
+export type PhaseProgressObserver = (entry: Readonly<PhaseTraceEntry>) => void
+
 const MAX_DURATION_MS = 600_000
 const MAX_EVIDENCE_VALUE = Number.MAX_SAFE_INTEGER
 const MAX_PHASES = 64
@@ -56,7 +58,7 @@ export class CloudflarePhaseTrace {
   private reservedPhases = 0
   private compositeActive = false
 
-  constructor(private readonly clock: () => number = defaultNow) {
+  constructor(private readonly clock: () => number = defaultNow, private readonly onPhase?: PhaseProgressObserver) {
     this.startedAt = clock()
   }
 
@@ -70,7 +72,9 @@ export class CloudflarePhaseTrace {
     if (!this.active) throw new Error("Cloudflare phase completion has no active leaf.")
     const active = this.active
     this.active = undefined
-    this.phases.push({ name: active.name, durationMs: boundedMs(this.clock() - active.startedAt), evidence: boundedEvidence({ ...active.evidence, ...evidence }) })
+    const entry = { name: active.name, durationMs: boundedMs(this.clock() - active.startedAt), evidence: boundedEvidence({ ...active.evidence, ...evidence }) }
+    this.phases.push(entry)
+    try { this.onPhase?.({ ...entry, evidence: entry.evidence && { ...entry.evidence } }) } catch { /* Observability cannot fail the request. */ }
   }
 
   async measure<T>(name: string, work: () => Promise<T>, evidence?: Record<string, unknown>): Promise<T> {

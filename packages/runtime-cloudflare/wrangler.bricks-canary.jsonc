@@ -1,0 +1,47 @@
+// Isolated native Bricks 2.4 RC canary. No production route or customer hostname.
+{
+  "name": "bricks24-native-canary-20260910",
+  "main": "src/worker-d1.ts",
+  "compatibility_date": "2026-07-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "limits": { "cpu_ms": 300000 },
+  "observability": {
+    "enabled": true,
+    "logs": { "invocation_logs": true, "head_sampling_rate": 1 }
+  },
+  "triggers": { "crons": [] },
+  "vars": {
+    "WORDPRESS_SITE_CONTEXTS": "[{\"id\":\"default\",\"hostname\":\"bricks24-native-canary-20260910.mavnewlife.workers.dev\",\"origin\":\"https://bricks24-native-canary-20260910.mavnewlife.workers.dev\"}]",
+    "WORDPRESS_PHASE_PROGRESS_LOGS": "1"
+  },
+  "queues": {
+    "producers": [
+      { "binding": "WORDPRESS_RUNTIME_QUEUE", "queue": "bricks24-native-canary-20260910" }
+    ],
+    "consumers": [
+      {
+        "queue": "bricks24-native-canary-20260910",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "max_concurrency": 1,
+        "dead_letter_queue": "bricks24-native-canary-20260910-dlq"
+      }
+    ]
+  },
+  "r2_buckets": [
+    { "binding": "WORDPRESS_STATE_BUCKET", "bucket_name": "bricks24-native-canary-20260910b" }
+  ],
+  "d1_databases": [
+    {
+      "binding": "WORDPRESS_STATE_DATABASE",
+      "database_name": "bricks24-native-canary-20260910b",
+      "database_id": "6b7b36c7-8f5e-4faa-80ad-a4eed78f050b"
+    }
+  ],
+  "rules": [
+    { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false },
+    { "type": "Data", "globs": ["**/*.sqlite", "**/*-runtime.zip", "**/*-canonical-seed.zip"], "fallthrough": false }
+  ]
+}

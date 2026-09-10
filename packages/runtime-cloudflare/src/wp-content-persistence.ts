@@ -3,7 +3,10 @@ import { DEFAULT_SITE_CONTEXT, siteStorageKeys, type SiteContext } from "./site-
 export const R2_WP_CONTENT_OBJECT_PREFIX = siteStorageKeys(DEFAULT_SITE_CONTEXT).wpContentObjectPrefix
 export const MAX_WP_CONTENT_FILES = 5000
 export const MAX_WP_CONTENT_FILE_BYTES = 8 * 1024 * 1024
-export const MAX_WP_CONTENT_TOTAL_BYTES = 64 * 1024 * 1024
+// This is an R2-backed canonical-storage limit, not an in-isolate memory
+// allocation. The Bricks 2.4 probe persists its public asset tree in R2 and
+// hydrates only the files PHP needs below.
+export const MAX_WP_CONTENT_TOTAL_BYTES = 160 * 1024 * 1024
 
 export interface WpContentFileMetadata {
   path: string
@@ -28,7 +31,9 @@ export function validateWpContentMetadata(value: unknown, runtimeOwnedPaths: str
   for (const file of value) {
     if (!file || typeof file !== "object" || typeof file.path !== "string" || !isCanonicalWpContentPath(file.path, runtimeOwnedPaths) || paths.has(file.path)
       || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_WP_CONTENT_FILE_BYTES) {
-      throw new Error("Canonical wp-content metadata contains an invalid file.")
+      const path = file && typeof file === "object" && "path" in file ? String(file.path) : "unknown"
+      const size = file && typeof file === "object" && "size" in file ? String(file.size) : "unknown"
+      throw new Error(`Canonical wp-content metadata contains an invalid file: ${path} (${size} bytes).`)
     }
     paths.add(file.path)
     total += file.size
@@ -55,6 +60,20 @@ export function validateWpContentDeletedPaths(value: unknown, runtimeOwnedPaths:
 export function isCanonicalWpContentPath(path: string, runtimeOwnedPaths: string[] = []): boolean {
   if (!/^(?:plugins|themes|languages|mu-plugins)\//.test(path) || path.includes("\\") || path.split("/").some((segment) => !segment || segment === "." || segment === "..")) return false
   return !runtimeOwnedWpContentPaths(runtimeOwnedPaths).some((owned) => owned.endsWith("/") ? path.startsWith(owned) : path === owned || path.startsWith(`${owned}/`))
+}
+
+/**
+ * Files required by PHP-WASM at boot. Bricks' asset and translation trees are
+ * intentionally left in the canonical R2 manifest: the Worker already serves
+ * public wp-content assets directly from that manifest, and materializing
+ * those 62 MB of browser-only files into PHP-WASM would exceed the Cloudflare
+ * Worker memory ceiling before WordPress can run.
+ *
+ * This is deliberately narrow to the exact Bricks 2.4 package under test;
+ * it is not a claim that arbitrary theme/plugin paths are safe to omit.
+ */
+export function isWorkerMaterializedWpContentPath(path: string): boolean {
+  return !path.startsWith("themes/bricks/assets/") && !path.startsWith("themes/bricks/languages/")
 }
 
 export function runtimeOwnedWpContentPaths(additional: string[] = []): string[] {
