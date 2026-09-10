@@ -75,7 +75,8 @@ const MARKDOWN_INDEX_PATH = "/tmp/markdown-index.sqlite"
 const MARKDOWN_RESOLVED_INDEX_PATH = "/tmp/markdown-index-8133b4cf3c66.sqlite"
 const MARKDOWN_CHANGES_PATH = "/tmp/wp-codebox-canonical-changes.json"
 const PUBLICATION_CHANGES_PATH = "/tmp/wp-codebox-publication-changes.json"
-const WORDPRESS_PAGE_CACHE_SCHEMA = "v3"
+// Bump for changes to PHP materialization/rendering without a content revision.
+const WORDPRESS_PAGE_CACHE_SCHEMA = "v4"
 const PUBLIC_WP_CONTENT_EXTENSION = /\.(?:css|js|mjs|json|txt|xml|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|webp|avif|ico)$/i
 const MAX_CRON_EVENTS_PER_INVOCATION = 5
 const MAX_CRON_INVOCATION_MS = 25_000
@@ -1513,7 +1514,10 @@ function wordPressPageCacheKey(request: Request, pointer: MarkdownPointer, site:
 }
 
 async function wordPressPageSnapshotKey(request: Request, pointer: MarkdownPointer, site: SiteContext): Promise<string> {
-  return publishedPageObjectKey(pointer.revision, canonicalPublicRoute(request), site)
+  const key = await publishedPageObjectKey(pointer.revision, canonicalPublicRoute(request), site)
+  // Runtime caches must not reuse stale rendered bytes after a runtime upgrade.
+  // Explicit publication artifacts keep their independent immutable keys.
+  return `${key.slice(0, -5)}.${WORDPRESS_PAGE_CACHE_SCHEMA}.json`
 }
 
 function pageCacheResponse(response: Response, head: boolean, status: "hit" | "miss", source: "edge" | "r2" | "render"): Response {
