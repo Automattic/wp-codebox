@@ -1,3 +1,4 @@
+import { routeNativeBricksPreview, isProtectedNativeSite } from "./bricks-preview.js"
 import { patchSqliteDeleteAlias } from "./sqlite-delete-alias-compatibility.js"
 import { routeNativeBricksApi, type NativeMutation, type NativeExecution, type NativePointer } from "./native-bricks-api.js"
 import { NATIVE_BRICKS_APPLY_PHP } from "./native-bricks-php.js"
@@ -315,6 +316,11 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
         const operations = resolveOperations?.(env)
         if (!operations || !("WORDPRESS_STATE_DATABASE" in env)) return Response.json({ schema: "wp-codebox/provisioning-api/v1", error: { code: "not_found", message: "The API resource is unavailable." } }, { status: 404 })
         await operations.initialize()
+        const nativePreview = await routeNativeBricksPreview(request, env as Env & { WORDPRESS_STATE_DATABASE: D1Database }, {
+          state: site => resolveCoordinator(env, site).state(),
+          render: (request, site, pointer) => renderNativeBricksPreview(request, env, site, pointer),
+        })
+        if (nativePreview) return nativePreview
         const native = await routeNativeBricksApi(request, env as Env & { WORDPRESS_STATE_DATABASE: D1Database }, {
           coordinator: site => resolveCoordinator(env, site),
           execute: (site, input, artifact, lease, prepare) => runNativeBricksMutation(env, site, input, artifact, lease, prepare),
@@ -334,6 +340,9 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       } catch (error) {
         if (error instanceof Error && error.message === "Unknown site hostname.") return new Response(error.message, { status: 421 })
         throw error
+      }
+      if (env.WORDPRESS_STATE_DATABASE && await isProtectedNativeSite(env as Env & { WORDPRESS_STATE_DATABASE: D1Database }, site)) {
+        return new Response("Native allocation requires its receipt-bound preview API.", { status: 404, headers: { "cache-control": "private, no-store", "x-robots-tag": "noindex, nofollow" } })
       }
       if (new URL(request.url).pathname === "/wp-cron.php") return new Response("WordPress cron is managed by the Cloudflare scheduled handler.", { status: 404 })
       const publishedResponse = await servePublishedWordPressPage(request, env.WORDPRESS_STATE_BUCKET, site)
@@ -3544,4 +3553,18 @@ async function runNativeBricksMutation(env: RuntimeEnv, site: SiteContext, input
     if (runtime) await disposeRequestHandler(runtime.requestHandler)
     await discardCachedRuntime(site.id)
   }
+}
+
+// A throwaway runtime renders the exact supplied canonical revision. It never
+// commits, caches PHP state, bootstraps a site, or persists request side effects.
+async function renderNativeBricksPreview(request: Request, env: RuntimeEnv, site: SiteContext, pointer: MarkdownPointer): Promise<Response> {
+  const pinned = { state: async () => ({ schema: "wp-codebox/cloudflare-wordpress-state/v2", store: "d1", pointer, version: 0 }) } as RevisionCoordinator
+  const asset = await serveWordPressWpContent(request, env.WORDPRESS_STATE_BUCKET, pinned, site)
+    ?? await serveWordPressUpload(request, env.WORDPRESS_STATE_BUCKET, pinned, site)
+    ?? await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)
+  if (asset) return asset
+  if (/^\/wp-(?:content|includes)\//.test(new URL(request.url).pathname)) return new Response("Native preview asset not found.", { status: 404 })
+  const runtime = await bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, site.origin, await canonicalWordPressAuthConstants(env, site), false, site)
+  try { return toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request))) }
+  finally { await disposeRequestHandler(runtime.requestHandler) }
 }
