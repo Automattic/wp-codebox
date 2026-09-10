@@ -1,0 +1,233 @@
+{
+  "data": {
+    "viewer": {
+      "accounts": [
+        {
+          "workersInvocationsAdaptive": [
+            {
+              "dimensions": {
+                "datetime": "2026-09-10T20:13:31Z",
+                "scriptName": "bricks24-native-canary-20260910",
+                "status": "success"
+              },
+              "quantiles": {
+                "cpuTimeP50": 5913274,
+                "cpuTimeP99": 5913274,
+                "memoryUsageBytesP50": 234798560,
+                "memoryUsageBytesP99": 234798560,
+                "memoryUsageBytesP999": 234798560,
+                "wasmMemoryBytesP50": 139198460,
+                "wasmMemoryBytesP99": 139198460,
+                "wasmMemoryBytesP999": 139198460
+              },
+              "sum": {
+                "errors": 0,
+                "requests": 1,
+                "subrequests": 0
+              }
+            },
+            {
+              "dimensions": {
+                "datetime": "2026-09-10T20:15:45Z",
+                "scriptName": "bricks24-native-canary-20260910",
+                "status": "success"
+              },
+              "quantiles": {
+                "cpuTimeP50": 5440020,
+                "cpuTimeP99": 5440020,
+                "memoryUsageBytesP50": 268639500,
+                "memoryUsageBytesP99": 268639500,
+                "memoryUsageBytesP999": 268639500,
+                "wasmMemoryBytesP50": 139198460,
+                "wasmMemoryBytesP99": 139198460,
+                "wasmMemoryBytesP999": 139198460
+              },
+              "sum": {
+                "errors": 0,
+                "requests": 1,
+                "subrequests": 0
+              }
+            },
+            {
+              "dimensions": {
+                "datetime": "2026-09-10T20:13:18Z",
+                "scriptName": "bricks24-native-canary-20260910",
+                "status": "success"
+              },
+              "quantiles": {
+                "cpuTimeP50": 15540,
+                "cpuTimeP99": 15540,
+                "memoryUsageBytesP50": 18987184,
+                "memoryUsageBytesP99": 18987184,
+                "memoryUsageBytesP999": 18987184,
+                "wasmMemoryBytesP50": 0,
+                "wasmMemoryBytesP99": 0,
+                "wasmMemoryBytesP999": 0
+              },
+              "sum": {
+                "errors": 0,
+                "requests": 1,
+                "subrequests": 0
+              }
+            },
+            {
+              "dimensions": {
+                "datetime": "2026-09-10T20:15:24Z",
+                "scriptName": "bricks24-native-canary-20260910",
+                "status": "success"
+              },
+              "quantiles": {
+                "cpuTimeP50": 6859056,
+                "cpuTimeP99": 6859056,
+                "memoryUsageBytesP50": 225888500,
+                "memoryUsageBytesP99": 225888500,
+                "memoryUsageBytesP999": 225888500,
+                "wasmMemoryBytesP50": 139198460,
+                "wasmMemoryBytesP99": 139198460,
+                "wasmMemoryBytesP999": 139198460
+              },
+              "sum": {
+                "errors": 0,
+                "requests": 1,
+                "subrequests": 0
+              }
+            },
+            {
+              "dimensions": {
+                "datetime": "2026-09-10T20:15:56Z",
+                "scriptName": "bricks24-native-canary-20260910",
+                "status": "success"
+              },
+              "quantiles": {
+                "cpuTimeP50": 3740,
+                "cpuTimeP99": 3740,
+                "memoryUsageBytesP50": 37322056,
+                "memoryUsageBytesP99": 37322056,
+                "memoryUsageBytesP999": 37322056,
+                "wasmMemoryBytesP50": 0,
+                "wasmMemoryBytesP99": 0,
+                "wasmMemoryBytesP999": 0
+              },
+              "sum": {
+                "errors": 0,
+                "requests": 1,
+                "subrequests": 0
+              }
+            },
+            {
+              "dimensions": {
+                "datetime": "2026-09-10T20:15:35Z",
+                "scriptName": "bricks24-native-canary-20260910",
+                "status": "success"
+              },
+              "quantiles": {
+                "cpuTimeP50": 5840581,
+                "cpuTimeP99": 5840581,
+                "memoryUsageBytesP50": 245154200,
+                "memoryUsageBytesP99": 245154200,
+                "memoryUsageBytesP999": 245154200,
+                "wasmMemoryBytesP50": 115998720,
+                "wasmMemoryBytesP99": 115998720,
+                "wasmMemoryBytesP999": 115998720
+              },
+              "sum": {
+                "errors": 0,
+                "requests": 1,
+                "subrequests": 0
+              }
+            },
+            {
+              "dimensions": {
+                "datetime": "2026-09-10T20:15:02Z",
+                "scriptName": "bricks24-native-canary-20260910",
+                "status": "success"
+              },
+              "quantiles": {
+                "cpuTimeP50": 29415,
+                "cpuTimeP99": 29415,
+                "memoryUsageBytesP50": 15858428,
+                "memoryUsageBytesP99": 15858428,
+                "memoryUsageBytesP999": 15858428,
+                "wasmMemoryBytesP50": 0,
+                "wasmMemoryBytesP99": 0,
+                "wasmMemoryBytesP999": 0
+              },
+              "sum": {
+                "errors": 0,
+                "requests": 1,
+                "subrequests": 0
+              }
+            },
+            {
+              "dimensions": {
+                "datetime": "2026-09-10T20:15:03Z",
+                "scriptName": "bricks24-native-canary-20260910",
+                "status": "success"
+              },
+              "quantiles": {
+                "cpuTimeP50": 9525801,
+                "cpuTimeP99": 9525801,
+                "memoryUsageBytesP50": 67408360,
+                "memoryUsageBytesP99": 67408360,
+                "memoryUsageBytesP999": 67408360,
+                "wasmMemoryBytesP50": 0,
+                "wasmMemoryBytesP99": 0,
+                "wasmMemoryBytesP999": 0
+              },
+              "sum": {
+                "errors": 0,
+                "requests": 1,
+                "subrequests": 0
+              }
+            },
+            {
+              "dimensions": {
+                "datetime": "2026-09-10T20:15:55Z",
+                "scriptName": "bricks24-native-canary-20260910",
+                "status": "success"
+              },
+              "quantiles": {
+                "cpuTimeP50": 27277,
+                "cpuTimeP99": 27277,
+                "memoryUsageBytesP50": 37321980,
+                "memoryUsageBytesP99": 37321980,
+                "memoryUsageBytesP999": 37321980,
+                "wasmMemoryBytesP50": 0,
+                "wasmMemoryBytesP99": 0,
+                "wasmMemoryBytesP999": 0
+              },
+              "sum": {
+                "errors": 0,
+                "requests": 1,
+                "subrequests": 0
+              }
+            },
+            {
+              "dimensions": {
+                "datetime": "2026-09-10T20:13:41Z",
+                "scriptName": "bricks24-native-canary-20260910",
+                "status": "success"
+              },
+              "quantiles": {
+                "cpuTimeP50": 5067888,
+                "cpuTimeP99": 5067888,
+                "memoryUsageBytesP50": 268057860,
+                "memoryUsageBytesP99": 268057860,
+                "memoryUsageBytesP999": 268057860,
+                "wasmMemoryBytesP50": 139198460,
+                "wasmMemoryBytesP99": 139198460,
+                "wasmMemoryBytesP999": 139198460
+              },
+              "sum": {
+                "errors": 0,
+                "requests": 1,
+                "subrequests": 0
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "errors": null
+}

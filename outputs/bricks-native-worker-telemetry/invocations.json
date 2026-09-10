@@ -1,0 +1,162 @@
+[
+  {
+    "eventTimestamp": 1789071198011,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 15,
+    "wall_ms": 460,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "048eaf36-9226-4a86-860b-50e19cf558c6"
+    },
+    "exceptions": [],
+    "truncated": false,
+    "phase_logs": [
+      [
+        "{\"schema\":\"wp-codebox/cloudflare-runtime-phase-progress/v1\",\"name\":\"page-cache.state.read\",\"durationMs\":124}"
+      ],
+      [
+        "{\"schema\":\"wp-codebox/cloudflare-runtime-phase-progress/v1\",\"name\":\"page-cache.lookup\",\"durationMs\":9}"
+      ],
+      [
+        "{\"schema\":\"wp-codebox/cloudflare-runtime-phase-trace/v1\",\"operation\":\"read\",\"runtime\":\"not-used\",\"pageCache\":\"hit\",\"completed\":true,\"totalMs\":133,\"phases\":[{\"name\":\"page-cache.state.read\",\"durationMs\":124},{\"name\":\"page-cache.lookup\",\"durationMs\":9}]}"
+      ]
+    ]
+  },
+  {
+    "eventTimestamp": 1789071211832,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/previews/native_1e35568c9f48487b87bbffeeeaf43b31/",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 5913,
+    "wall_ms": 9619,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "048eaf36-9226-4a86-860b-50e19cf558c6"
+    },
+    "exceptions": [],
+    "truncated": false,
+    "phase_logs": []
+  },
+  {
+    "eventTimestamp": 1789071221509,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/previews/native_1e35568c9f48487b87bbffeeeaf43b31/",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 5067,
+    "wall_ms": 8810,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "048eaf36-9226-4a86-860b-50e19cf558c6"
+    },
+    "exceptions": [],
+    "truncated": false,
+    "phase_logs": []
+  },
+  {
+    "eventTimestamp": 1789071302936,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/artifacts/REDACTED",
+    "method": "PUT",
+    "status": 200,
+    "cpu_ms": 29,
+    "wall_ms": 976,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "048eaf36-9226-4a86-860b-50e19cf558c6"
+    },
+    "exceptions": [],
+    "truncated": false,
+    "phase_logs": []
+  },
+  {
+    "eventTimestamp": 1789071303994,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/revisions",
+    "method": "POST",
+    "status": 200,
+    "cpu_ms": 9525,
+    "wall_ms": 20340,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "048eaf36-9226-4a86-860b-50e19cf558c6"
+    },
+    "exceptions": [],
+    "truncated": false,
+    "phase_logs": []
+  },
+  {
+    "eventTimestamp": 1789071324396,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/previews/native_f269f86d0666432180b993e609b09a04/",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 6859,
+    "wall_ms": 10712,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "048eaf36-9226-4a86-860b-50e19cf558c6"
+    },
+    "exceptions": [],
+    "truncated": false,
+    "phase_logs": []
+  },
+  {
+    "eventTimestamp": 1789071335557,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/restores",
+    "method": "POST",
+    "status": 200,
+    "cpu_ms": 5840,
+    "wall_ms": 9989,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "048eaf36-9226-4a86-860b-50e19cf558c6"
+    },
+    "exceptions": [],
+    "truncated": false,
+    "phase_logs": []
+  },
+  {
+    "eventTimestamp": 1789071345988,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/previews/native_8a3c03c11ba24262a40041c7d29a6c84/",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 5440,
+    "wall_ms": 8675,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "048eaf36-9226-4a86-860b-50e19cf558c6"
+    },
+    "exceptions": [],
+    "truncated": false,
+    "phase_logs": []
+  },
+  {
+    "eventTimestamp": 1789071355130,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/restores",
+    "method": "POST",
+    "status": 200,
+    "cpu_ms": 27,
+    "wall_ms": 624,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "048eaf36-9226-4a86-860b-50e19cf558c6"
+    },
+    "exceptions": [],
+    "truncated": false,
+    "phase_logs": []
+  },
+  {
+    "eventTimestamp": 1789071356249,
+    "url": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/sites/native-api/operations/native_telemetry_20260910_restore",
+    "method": "GET",
+    "status": 200,
+    "cpu_ms": 3,
+    "wall_ms": 129,
+    "outcome": "ok",
+    "scriptVersion": {
+      "id": "048eaf36-9226-4a86-860b-50e19cf558c6"
+    },
+    "exceptions": [],
+    "truncated": false,
+    "phase_logs": []
+  }
+]

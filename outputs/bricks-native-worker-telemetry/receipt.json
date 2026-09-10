@@ -1,0 +1,136 @@
+{
+  "schema": "wp-codebox/native-worker-telemetry-rehearsal/v1",
+  "observed_at": "2026-09-10T20:20:44.832231+00:00",
+  "source_commit": "fd4775e974239de81092356223c78bb4836291db",
+  "runtime_source_commit": "2f851aa136cb0a20a0bed1c456a6469c12767ba6",
+  "worker": "bricks24-native-canary-20260910",
+  "deployment_version": "048eaf36-9226-4a86-860b-50e19cf558c6",
+  "window": {
+    "start": "2026-09-10T20:13:00Z",
+    "end": "2026-09-10T20:18:00Z"
+  },
+  "result": {
+    "functional_rehearsal": "passed",
+    "cpu_configured_limit_ms": 300000,
+    "memory_limit_bytes": 134217728,
+    "memory_qualification": "failed",
+    "licensed_editor_qualification": "not_run_missing_legitimate_license",
+    "production_release_qualification": "not_passed"
+  },
+  "state_before": [
+    {
+      "site_id": "default",
+      "revision": "11378c4e-5194-4f1a-ae87-a6c9f16087c9",
+      "manifest_key": "sites/default/markdown/revisions/11378c4e-5194-4f1a-ae87-a6c9f16087c9.json",
+      "persisted_at": "2026-09-10T07:35:35.441Z",
+      "version": 24,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-api",
+      "revision": "fca9766e-bfcb-4f66-9566-9535c334ce61",
+      "manifest_key": "sites/native-api/markdown/revisions/fca9766e-bfcb-4f66-9566-9535c334ce61.json",
+      "persisted_at": "2026-09-10T19:50:26.550Z",
+      "version": 5,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-engine",
+      "revision": "ee5555b1-c849-464e-83c5-064f7d359cce",
+      "manifest_key": "sites/native-engine/markdown/revisions/ee5555b1-c849-464e-83c5-064f7d359cce.json",
+      "persisted_at": "2026-09-10T19:08:39.332Z",
+      "version": 1,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-sales-rehearsal",
+      "revision": "8be31b29-8405-4649-b212-3ea77e4c0660",
+      "manifest_key": "sites/native-sales-rehearsal/markdown/revisions/8be31b29-8405-4649-b212-3ea77e4c0660.json",
+      "persisted_at": "2026-09-10T19:56:30.650Z",
+      "version": 1,
+      "lease_token": null
+    }
+  ],
+  "state_after": [
+    {
+      "site_id": "default",
+      "revision": "11378c4e-5194-4f1a-ae87-a6c9f16087c9",
+      "manifest_key": "sites/default/markdown/revisions/11378c4e-5194-4f1a-ae87-a6c9f16087c9.json",
+      "persisted_at": "2026-09-10T07:35:35.441Z",
+      "version": 24,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-api",
+      "revision": "3255b220-cff9-465d-b58e-73859918764c",
+      "manifest_key": "sites/native-api/markdown/revisions/3255b220-cff9-465d-b58e-73859918764c.json",
+      "persisted_at": "2026-09-10T20:15:44.801Z",
+      "version": 7,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-engine",
+      "revision": "ee5555b1-c849-464e-83c5-064f7d359cce",
+      "manifest_key": "sites/native-engine/markdown/revisions/ee5555b1-c849-464e-83c5-064f7d359cce.json",
+      "persisted_at": "2026-09-10T19:08:39.332Z",
+      "version": 1,
+      "lease_token": null
+    },
+    {
+      "site_id": "native-sales-rehearsal",
+      "revision": "8be31b29-8405-4649-b212-3ea77e4c0660",
+      "manifest_key": "sites/native-sales-rehearsal/markdown/revisions/8be31b29-8405-4649-b212-3ea77e4c0660.json",
+      "persisted_at": "2026-09-10T19:56:30.650Z",
+      "version": 1,
+      "lease_token": null
+    }
+  ],
+  "preserved_namespaces": [
+    "default",
+    "native-engine",
+    "native-sales-rehearsal"
+  ],
+  "canonical_inventory": {
+    "files": {
+      "files": 147,
+      "bytes": 38450
+    },
+    "wpContent": {
+      "files": 1605,
+      "bytes": 76474629
+    },
+    "uploads": {
+      "files": 1,
+      "bytes": 68
+    }
+  },
+  "restore_pack": {
+    "schema": "wp-codebox/cloudflare-canonical-restore-pack/v1",
+    "objectKey": "sites/native-api/restore-packs/d1c5bf85422fca6a04c65e1bb11cb3b54e813aa9ece6c99970ed2ec0bbe35e23.zip",
+    "sha256": "d1c5bf85422fca6a04c65e1bb11cb3b54e813aa9ece6c99970ed2ec0bbe35e23",
+    "size": 3051273,
+    "fileCount": 1021,
+    "decodedBytes": 13873644
+  },
+  "measurement_notes": [
+    "Wrangler tail cpuTime/wallTime are milliseconds per invocation. GraphQL cpuTime quantiles are microseconds.",
+    "GraphQL memoryUsageBytes is V8 isolate memory; wasmMemoryBytes is WebAssembly linear memory. Neither is PHP allocator peak. The two memory series must not be added.",
+    "Memory is sampled for the whole isolate, not a per-request retained-heap snapshot; successful HTTP status does not pass the memory requirement.",
+    "D1/R2 analytics cover the shared disposable database/bucket during the stated window, including operator activity and any other callers; they are not attributed counts for an individual native invocation.",
+    "GraphQL subrequests=0 is recorded as returned; it is not proof of zero D1/R2 calls.",
+    "Stored canonical inventory is logical manifest byte accounting, not total physical bucket storage or live isolate retention.",
+    "No new customer resource, licensed-editor bypass, or cleanup of active allocations occurred."
+  ],
+  "files_sha256": {
+    "revised-php-measurements.json": "98b91ef07269db1e2ea4768c1c3351871469493a77c5c5afadc8c7792a95ca42",
+    "invocations.json": "236b39e36622d74df699db8e2562907be33dfda7f212de21af0ab677cfec509f",
+    "AccountWorkersInvocationsAdaptiveSum.json": "61fcfab00a1afebc3d377de118da1903c6e6694be55886a0a99748d2f6ca378c",
+    "mutations.json": "4fc235bb36a357f0ab96a63e211d5546993c5b3471c5ac94a707c76217261f3d",
+    "analytics-query.json": "1aa9dad4efbff3e0c1c8b31ca2b7d7d1a085070515ea5f73a8a3346b75b3776b",
+    "restored-php-measurements.json": "87fb0cb8e6c855793941ef0f3a774eadac41bf72bf30c675eef523a5eaf5821a",
+    "bindings-query.json": "ddd9474810d829b18d31ef01183fdb8abca82d9b71ee13e18e08068bc396e7a1",
+    "bindings-response.json": "30c4391d44ea604192c2d1747fd014ca1f04ada14768de4c79322815db947429",
+    "AccountWorkersInvocationsAdaptiveQuantiles.json": "d1fccdca7a7a2a3075977aba9f414e389e5c2f0e3c4025e670e77cf1a1cd01b4",
+    "analytics-response.json": "c88e4059e163cdc4def434f5bfa81c1a96754dd3778b0b1ca0b5506f7c8eb184"
+  }
+}

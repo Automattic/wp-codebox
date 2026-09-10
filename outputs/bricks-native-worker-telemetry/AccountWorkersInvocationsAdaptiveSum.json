@@ -1,0 +1,47 @@
+{
+  "data": {
+    "__type": {
+      "description": "",
+      "fields": [
+        {
+          "description": "Sum of client disconnects",
+          "name": "clientDisconnects"
+        },
+        {
+          "description": "Sum of cpu time in us",
+          "name": "cpuTimeUs"
+        },
+        {
+          "description": "Sum of Duration - GB*s",
+          "name": "duration"
+        },
+        {
+          "description": "Sum of Errors",
+          "name": "errors"
+        },
+        {
+          "description": "Sum of Request Duration in microseconds",
+          "name": "requestDuration"
+        },
+        {
+          "description": "Sum of Requests",
+          "name": "requests"
+        },
+        {
+          "description": "Sum of Response Body Sizes",
+          "name": "responseBodySize"
+        },
+        {
+          "description": "Sum of Subrequests",
+          "name": "subrequests"
+        },
+        {
+          "description": "Sum of Wall Time",
+          "name": "wallTime"
+        }
+      ],
+      "name": "AccountWorkersInvocationsAdaptiveSum"
+    }
+  },
+  "errors": null
+}

@@ -1,0 +1,207 @@
+{
+  "data": {
+    "__type": {
+      "description": "",
+      "fields": [
+        {
+          "description": "CPU time 25th percentile - microseconds",
+          "name": "cpuTimeP25"
+        },
+        {
+          "description": "CPU time 50th percentile - microseconds",
+          "name": "cpuTimeP50"
+        },
+        {
+          "description": "CPU time 75th percentile - microseconds",
+          "name": "cpuTimeP75"
+        },
+        {
+          "description": "CPU time 90th percentile - microseconds",
+          "name": "cpuTimeP90"
+        },
+        {
+          "description": "CPU time 95th percentile - microseconds",
+          "name": "cpuTimeP95"
+        },
+        {
+          "description": "CPU time 99th percentile - microseconds",
+          "name": "cpuTimeP99"
+        },
+        {
+          "description": "CPU time 99.9th percentile - microseconds",
+          "name": "cpuTimeP999"
+        },
+        {
+          "description": "Duration 25th percentile - GB*s",
+          "name": "durationP25"
+        },
+        {
+          "description": "Duration 50th percentile - GB*s",
+          "name": "durationP50"
+        },
+        {
+          "description": "Duration 75th percentile - GB*s",
+          "name": "durationP75"
+        },
+        {
+          "description": "Duration 90th percentile - GB*s",
+          "name": "durationP90"
+        },
+        {
+          "description": "Duration 95th percentile - GB*s",
+          "name": "durationP95"
+        },
+        {
+          "description": "Duration 99th percentile - GB*s",
+          "name": "durationP99"
+        },
+        {
+          "description": "Duration 99.9th percentile - GB*s",
+          "name": "durationP999"
+        },
+        {
+          "description": "V8 isolate memory usage 25th percentile across Worker invocations - bytes",
+          "name": "memoryUsageBytesP25"
+        },
+        {
+          "description": "V8 isolate memory usage 50th percentile across Worker invocations - bytes",
+          "name": "memoryUsageBytesP50"
+        },
+        {
+          "description": "V8 isolate memory usage 75th percentile across Worker invocations - bytes",
+          "name": "memoryUsageBytesP75"
+        },
+        {
+          "description": "V8 isolate memory usage 90th percentile across Worker invocations - bytes",
+          "name": "memoryUsageBytesP90"
+        },
+        {
+          "description": "V8 isolate memory usage 95th percentile across Worker invocations - bytes",
+          "name": "memoryUsageBytesP95"
+        },
+        {
+          "description": "V8 isolate memory usage 99th percentile across Worker invocations - bytes",
+          "name": "memoryUsageBytesP99"
+        },
+        {
+          "description": "V8 isolate memory usage 99.9th percentile across Worker invocations - bytes",
+          "name": "memoryUsageBytesP999"
+        },
+        {
+          "description": "Request duration 25th percentile - microseconds",
+          "name": "requestDurationP25"
+        },
+        {
+          "description": "Request duration 50th percentile - microseconds",
+          "name": "requestDurationP50"
+        },
+        {
+          "description": "Request duration 75th percentile - microseconds",
+          "name": "requestDurationP75"
+        },
+        {
+          "description": "Request duration 90th percentile - microseconds",
+          "name": "requestDurationP90"
+        },
+        {
+          "description": "Request duration 95th percentile - microseconds",
+          "name": "requestDurationP95"
+        },
+        {
+          "description": "Request duration 99th percentile - microseconds",
+          "name": "requestDurationP99"
+        },
+        {
+          "description": "Request duration 99.9th percentile - microseconds",
+          "name": "requestDurationP999"
+        },
+        {
+          "description": "Response body size 25th percentile - bytes",
+          "name": "responseBodySizeP25"
+        },
+        {
+          "description": "Response body size 50th percentile - bytes",
+          "name": "responseBodySizeP50"
+        },
+        {
+          "description": "Response body size 75th percentile - bytes",
+          "name": "responseBodySizeP75"
+        },
+        {
+          "description": "Response body size 90th percentile - bytes",
+          "name": "responseBodySizeP90"
+        },
+        {
+          "description": "Response body size 95th percentile - bytes",
+          "name": "responseBodySizeP95"
+        },
+        {
+          "description": "Response body size 99th percentile - bytes",
+          "name": "responseBodySizeP99"
+        },
+        {
+          "description": "Response body size 99.9th percentile - bytes",
+          "name": "responseBodySizeP999"
+        },
+        {
+          "description": "Wall time 25th percentile - microseconds",
+          "name": "wallTimeP25"
+        },
+        {
+          "description": "Wall time 50th percentile - microseconds",
+          "name": "wallTimeP50"
+        },
+        {
+          "description": "Wall time 75th percentile - microseconds",
+          "name": "wallTimeP75"
+        },
+        {
+          "description": "Wall time 90th percentile - microseconds",
+          "name": "wallTimeP90"
+        },
+        {
+          "description": "Wall time 95th percentile - microseconds",
+          "name": "wallTimeP95"
+        },
+        {
+          "description": "Wall time 99th percentile - microseconds",
+          "name": "wallTimeP99"
+        },
+        {
+          "description": "Wall time 99.9th percentile - microseconds",
+          "name": "wallTimeP999"
+        },
+        {
+          "description": "WebAssembly linear memory usage 25th percentile across Worker invocations - bytes",
+          "name": "wasmMemoryBytesP25"
+        },
+        {
+          "description": "WebAssembly linear memory usage 50th percentile across Worker invocations - bytes",
+          "name": "wasmMemoryBytesP50"
+        },
+        {
+          "description": "WebAssembly linear memory usage 75th percentile across Worker invocations - bytes",
+          "name": "wasmMemoryBytesP75"
+        },
+        {
+          "description": "WebAssembly linear memory usage 90th percentile across Worker invocations - bytes",
+          "name": "wasmMemoryBytesP90"
+        },
+        {
+          "description": "WebAssembly linear memory usage 95th percentile across Worker invocations - bytes",
+          "name": "wasmMemoryBytesP95"
+        },
+        {
+          "description": "WebAssembly linear memory usage 99th percentile across Worker invocations - bytes",
+          "name": "wasmMemoryBytesP99"
+        },
+        {
+          "description": "WebAssembly linear memory usage 99.9th percentile across Worker invocations - bytes",
+          "name": "wasmMemoryBytesP999"
+        }
+      ],
+      "name": "AccountWorkersInvocationsAdaptiveQuantiles"
+    }
+  },
+  "errors": null
+}

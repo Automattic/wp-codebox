@@ -1,0 +1,13 @@
+{
+  "schema": "wp-codebox/native-bricks-resource-observation/v1",
+  "operation_id": "native_telemetry_20260910_restore",
+  "wall_ms": 8317,
+  "peak_php_bytes": 48758784,
+  "unmeasured": [
+    "worker_cpu_ms",
+    "peak_isolate_bytes",
+    "d1_reads_writes",
+    "r2_operations",
+    "subrequests"
+  ]
+}

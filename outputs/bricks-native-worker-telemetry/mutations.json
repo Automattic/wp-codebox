@@ -1,0 +1,592 @@
+{
+  "origin": "https://bricks24-native-canary-20260910.mavnewlife.workers.dev",
+  "base": {
+    "receipt_id": "native_1e35568c9f48487b87bbffeeeaf43b31",
+    "canonical_state_version": 5,
+    "canonical_state_revision": "fca9766e-bfcb-4f66-9566-9535c334ce61",
+    "canonical_manifest_key": "sites/native-api/markdown/revisions/fca9766e-bfcb-4f66-9566-9535c334ce61.json",
+    "canonical_persisted_at": "2026-09-10T19:50:26.550Z",
+    "artifact_sha256": "e5544bd61426809a13ee5f6af8e99652fa5f58019d2ed55aaa305931733debd9",
+    "native_document_hashes": [
+      "de4a6efd1bc3347cfcef1a74f3533c973e9820a9b704a92acba9837f7139ae67",
+      "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+      "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+      "15608f7028a1d7865c1128f80a100b4b299316e21f0e555f81b3bdd061c15930"
+    ],
+    "design_system_version": "design-system-1"
+  },
+  "revise": {
+    "request": {
+      "schema_version": 1,
+      "target_runtime": "wordpress_bricks_cloudflare_v1",
+      "operation_id": "native_telemetry_20260910_revise",
+      "idempotency_key": "native_telemetry_20260910_revise",
+      "site_id": "native-api",
+      "customer_id": "customer_417",
+      "bricks_artifact": {
+        "version": "wp-codebox/bricks-site-artifact/v1",
+        "sha256": "b084e18fb8010bd8d5ff23b937f42491e3d5fa7a803860c47be59028663d5c36"
+      },
+      "runtime_artifact": {
+        "version": "2.4-rc",
+        "sha256": "a97171e889ff82a92949dff994f10ceeb38cc70d46d7df3d97d3522562c2e887"
+      },
+      "dossier": {
+        "revision": 3,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "creative_provenance": {
+        "canonicalCommit": "4a70be1400cbf3e32e05a7cda6a4ca35d28f1c21",
+        "catalogSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "guideSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "references": [
+          {
+            "id": "bright-kind-cleaning",
+            "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+          }
+        ],
+        "version": "2026-09-10-v1"
+      },
+      "authorized_assets": [
+        {
+          "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+          "usage_status": "approved"
+        }
+      ],
+      "starter_id": "starter_native_service_v1",
+      "editing": {
+        "acceptance_sequence": [
+          "edit",
+          "publish",
+          "public_observation",
+          "restore",
+          "reopen"
+        ],
+        "granularity": "native_bricks_elements",
+        "target_role": {
+          "required_capabilities": [
+            "bricks_edit_content"
+          ],
+          "role_slug": "editor"
+        }
+      },
+      "license_secret_ref": "BRICKS_LICENSE_KEY",
+      "revision_receipt": {
+        "receipt_id": "native_1e35568c9f48487b87bbffeeeaf43b31",
+        "canonical_state_version": 5,
+        "canonical_state_revision": "fca9766e-bfcb-4f66-9566-9535c334ce61",
+        "canonical_manifest_key": "sites/native-api/markdown/revisions/fca9766e-bfcb-4f66-9566-9535c334ce61.json",
+        "canonical_persisted_at": "2026-09-10T19:50:26.550Z",
+        "artifact_sha256": "e5544bd61426809a13ee5f6af8e99652fa5f58019d2ed55aaa305931733debd9",
+        "native_document_hashes": [
+          "de4a6efd1bc3347cfcef1a74f3533c973e9820a9b704a92acba9837f7139ae67",
+          "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+          "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+          "15608f7028a1d7865c1128f80a100b4b299316e21f0e555f81b3bdd061c15930"
+        ],
+        "design_system_version": "design-system-1"
+      },
+      "rollback_receipt": {
+        "required": true,
+        "receipt_id": "native_1e35568c9f48487b87bbffeeeaf43b31",
+        "canonical_state_version": 5,
+        "canonical_state_revision": "fca9766e-bfcb-4f66-9566-9535c334ce61",
+        "canonical_manifest_key": "sites/native-api/markdown/revisions/fca9766e-bfcb-4f66-9566-9535c334ce61.json",
+        "canonical_persisted_at": "2026-09-10T19:50:26.550Z",
+        "artifact_sha256": "e5544bd61426809a13ee5f6af8e99652fa5f58019d2ed55aaa305931733debd9",
+        "native_document_hashes": [
+          "de4a6efd1bc3347cfcef1a74f3533c973e9820a9b704a92acba9837f7139ae67",
+          "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+          "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+          "15608f7028a1d7865c1128f80a100b4b299316e21f0e555f81b3bdd061c15930"
+        ],
+        "design_system_version": "design-system-1"
+      },
+      "protected_preview": {
+        "state": "requested",
+        "access": "agency_managed",
+        "url": null
+      }
+    },
+    "result": {
+      "schema": "wp-codebox/provisioning-api/v1",
+      "operation": {
+        "id": "native_telemetry_20260910_revise",
+        "siteId": "native-api",
+        "state": "succeeded",
+        "stage": "prepared-allocation-native-documents-committed",
+        "progress": 100,
+        "retryAt": null,
+        "error": null,
+        "receipt": {
+          "schema_version": 1,
+          "target_runtime": "wordpress_bricks_cloudflare_v1",
+          "action": "revise",
+          "operation_id": "native_telemetry_20260910_revise",
+          "target_request_sha256": "045dce4154c038d2fac9ae821cdc967a35eaf90c1e3b8bdbf48942d7a4bb8986",
+          "site_id": "native-api",
+          "customer_id": "customer_417",
+          "state": "protected_preview",
+          "site_allocation": {
+            "allocation_id": "native-api",
+            "canonical_state_revision": "581090cd-2b48-4547-b642-0d7675d3d237"
+          },
+          "native_records": {
+            "page_ids": [
+              2
+            ],
+            "template_ids": [
+              4,
+              6
+            ],
+            "media_ids": [
+              1
+            ]
+          },
+          "native_document_hashes": [
+            "0d1d5858922606e8fecfe329cbebafd30f6411f8d7be69f3bec111ef2339c27d",
+            "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+            "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+            "dc3f2eb30b731194bf4dbb5b02d1efb590e5d28fc788d54ebfdbf41ef7263bc9"
+          ],
+          "design_system_version": "design-system-1",
+          "bricks_artifact_sha256": "b084e18fb8010bd8d5ff23b937f42491e3d5fa7a803860c47be59028663d5c36",
+          "dossier_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "creative_provenance": {
+            "version": "2026-09-10-v1",
+            "canonicalCommit": "4a70be1400cbf3e32e05a7cda6a4ca35d28f1c21",
+            "guideSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "catalogSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "references": [
+              {
+                "id": "bright-kind-cleaning",
+                "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+              }
+            ]
+          },
+          "authorized_asset_hashes": [
+            "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
+          ],
+          "target_role": {
+            "role_slug": "editor",
+            "required_capabilities": [
+              "bricks_edit_content"
+            ],
+            "editability_verified": false
+          },
+          "acceptance_sequence": [
+            "edit",
+            "publish",
+            "public_observation",
+            "restore",
+            "reopen"
+          ],
+          "protected_preview": {
+            "state": "ready",
+            "url": "https://native-api-bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/previews/native_f269f86d0666432180b993e609b09a04/"
+          },
+          "acceptance_results": [
+            {
+              "step": "edit",
+              "status": "not_run",
+              "evidence_sha256": null
+            },
+            {
+              "step": "publish",
+              "status": "not_run",
+              "evidence_sha256": null
+            },
+            {
+              "step": "public_observation",
+              "status": "not_run",
+              "evidence_sha256": null
+            },
+            {
+              "step": "restore",
+              "status": "not_run",
+              "evidence_sha256": null
+            },
+            {
+              "step": "reopen",
+              "status": "not_run",
+              "evidence_sha256": null
+            }
+          ],
+          "acceptance_transaction_sha256": null,
+          "deployment": {
+            "version": "048eaf36-9226-4a86-860b-50e19cf558c6",
+            "runtime_artifact_version": "2.4-rc",
+            "runtime_artifact_sha256": "a97171e889ff82a92949dff994f10ceeb38cc70d46d7df3d97d3522562c2e887",
+            "artifact_hashes": [
+              "a97171e889ff82a92949dff994f10ceeb38cc70d46d7df3d97d3522562c2e887",
+              "b084e18fb8010bd8d5ff23b937f42491e3d5fa7a803860c47be59028663d5c36"
+            ]
+          },
+          "evidence": {
+            "desktop_sha256": null,
+            "mobile_sha256": null,
+            "client_edit_transaction_sha256": null,
+            "resource_measurements_sha256": "3e53626d9e2e3a3a66093dccb5dffc37a82cce3644fc579554dcdadc66d7a8ae"
+          },
+          "revision_receipt": {
+            "receipt_id": "native_f269f86d0666432180b993e609b09a04",
+            "canonical_state_version": 6,
+            "canonical_state_revision": "581090cd-2b48-4547-b642-0d7675d3d237",
+            "canonical_manifest_key": "sites/native-api/markdown/revisions/581090cd-2b48-4547-b642-0d7675d3d237.json",
+            "canonical_persisted_at": "2026-09-10T20:15:20.307Z",
+            "artifact_sha256": "b084e18fb8010bd8d5ff23b937f42491e3d5fa7a803860c47be59028663d5c36",
+            "native_document_hashes": [
+              "0d1d5858922606e8fecfe329cbebafd30f6411f8d7be69f3bec111ef2339c27d",
+              "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+              "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+              "dc3f2eb30b731194bf4dbb5b02d1efb590e5d28fc788d54ebfdbf41ef7263bc9"
+            ],
+            "design_system_version": "design-system-1"
+          },
+          "rollback_receipt": {
+            "receipt_id": "native_1e35568c9f48487b87bbffeeeaf43b31",
+            "canonical_state_version": 5,
+            "canonical_state_revision": "fca9766e-bfcb-4f66-9566-9535c334ce61",
+            "canonical_manifest_key": "sites/native-api/markdown/revisions/fca9766e-bfcb-4f66-9566-9535c334ce61.json",
+            "canonical_persisted_at": "2026-09-10T19:50:26.550Z",
+            "artifact_sha256": "e5544bd61426809a13ee5f6af8e99652fa5f58019d2ed55aaa305931733debd9",
+            "native_document_hashes": [
+              "de4a6efd1bc3347cfcef1a74f3533c973e9820a9b704a92acba9837f7139ae67",
+              "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+              "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+              "15608f7028a1d7865c1128f80a100b4b299316e21f0e555f81b3bdd061c15930"
+            ],
+            "design_system_version": "design-system-1"
+          },
+          "restoration": null
+        }
+      }
+    },
+    "observation": {
+      "path": "/v1/bricks/sites/native-api/previews/native_f269f86d0666432180b993e609b09a04/",
+      "status": 200,
+      "wall_ms": 11153,
+      "heading_observed": true
+    }
+  },
+  "restore": {
+    "request": {
+      "schema_version": 1,
+      "target_runtime": "wordpress_bricks_cloudflare_v1",
+      "operation_id": "native_telemetry_20260910_restore",
+      "idempotency_key": "native_telemetry_20260910_restore",
+      "site_id": "native-api",
+      "customer_id": "customer_417",
+      "bricks_artifact": {
+        "version": "wp-codebox/bricks-site-artifact/v1",
+        "sha256": "e5544bd61426809a13ee5f6af8e99652fa5f58019d2ed55aaa305931733debd9"
+      },
+      "runtime_artifact": {
+        "version": "2.4-rc",
+        "sha256": "a97171e889ff82a92949dff994f10ceeb38cc70d46d7df3d97d3522562c2e887"
+      },
+      "dossier": {
+        "revision": 3,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "creative_provenance": {
+        "canonicalCommit": "4a70be1400cbf3e32e05a7cda6a4ca35d28f1c21",
+        "catalogSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "guideSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "references": [
+          {
+            "id": "bright-kind-cleaning",
+            "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+          }
+        ],
+        "version": "2026-09-10-v1"
+      },
+      "authorized_assets": [
+        {
+          "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+          "usage_status": "approved"
+        }
+      ],
+      "starter_id": "starter_native_service_v1",
+      "editing": {
+        "acceptance_sequence": [
+          "edit",
+          "publish",
+          "public_observation",
+          "restore",
+          "reopen"
+        ],
+        "granularity": "native_bricks_elements",
+        "target_role": {
+          "required_capabilities": [
+            "bricks_edit_content"
+          ],
+          "role_slug": "editor"
+        }
+      },
+      "license_secret_ref": "BRICKS_LICENSE_KEY",
+      "revision_receipt": {
+        "receipt_id": "native_f269f86d0666432180b993e609b09a04",
+        "canonical_state_version": 6,
+        "canonical_state_revision": "581090cd-2b48-4547-b642-0d7675d3d237",
+        "canonical_manifest_key": "sites/native-api/markdown/revisions/581090cd-2b48-4547-b642-0d7675d3d237.json",
+        "canonical_persisted_at": "2026-09-10T20:15:20.307Z",
+        "artifact_sha256": "b084e18fb8010bd8d5ff23b937f42491e3d5fa7a803860c47be59028663d5c36",
+        "native_document_hashes": [
+          "0d1d5858922606e8fecfe329cbebafd30f6411f8d7be69f3bec111ef2339c27d",
+          "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+          "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+          "dc3f2eb30b731194bf4dbb5b02d1efb590e5d28fc788d54ebfdbf41ef7263bc9"
+        ],
+        "design_system_version": "design-system-1"
+      },
+      "rollback_receipt": {
+        "required": true,
+        "receipt_id": "native_1e35568c9f48487b87bbffeeeaf43b31",
+        "canonical_state_version": 5,
+        "canonical_state_revision": "fca9766e-bfcb-4f66-9566-9535c334ce61",
+        "canonical_manifest_key": "sites/native-api/markdown/revisions/fca9766e-bfcb-4f66-9566-9535c334ce61.json",
+        "canonical_persisted_at": "2026-09-10T19:50:26.550Z",
+        "artifact_sha256": "e5544bd61426809a13ee5f6af8e99652fa5f58019d2ed55aaa305931733debd9",
+        "native_document_hashes": [
+          "de4a6efd1bc3347cfcef1a74f3533c973e9820a9b704a92acba9837f7139ae67",
+          "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+          "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+          "15608f7028a1d7865c1128f80a100b4b299316e21f0e555f81b3bdd061c15930"
+        ],
+        "design_system_version": "design-system-1"
+      },
+      "protected_preview": {
+        "state": "requested",
+        "access": "agency_managed",
+        "url": null
+      }
+    },
+    "result": {
+      "schema": "wp-codebox/provisioning-api/v1",
+      "operation": {
+        "id": "native_telemetry_20260910_restore",
+        "siteId": "native-api",
+        "state": "succeeded",
+        "stage": "prepared-allocation-native-documents-committed",
+        "progress": 100,
+        "retryAt": null,
+        "error": null,
+        "receipt": {
+          "schema_version": 1,
+          "target_runtime": "wordpress_bricks_cloudflare_v1",
+          "action": "restore",
+          "operation_id": "native_telemetry_20260910_restore",
+          "target_request_sha256": "bdcf32a13846280d302579f3857ffc524c7965b17ffd77531b494ca1b2028f8a",
+          "site_id": "native-api",
+          "customer_id": "customer_417",
+          "state": "protected_preview",
+          "site_allocation": {
+            "allocation_id": "native-api",
+            "canonical_state_revision": "3255b220-cff9-465d-b58e-73859918764c"
+          },
+          "native_records": {
+            "page_ids": [
+              2
+            ],
+            "template_ids": [
+              4,
+              6
+            ],
+            "media_ids": [
+              1
+            ]
+          },
+          "native_document_hashes": [
+            "de4a6efd1bc3347cfcef1a74f3533c973e9820a9b704a92acba9837f7139ae67",
+            "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+            "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+            "15608f7028a1d7865c1128f80a100b4b299316e21f0e555f81b3bdd061c15930"
+          ],
+          "design_system_version": "design-system-1",
+          "bricks_artifact_sha256": "e5544bd61426809a13ee5f6af8e99652fa5f58019d2ed55aaa305931733debd9",
+          "dossier_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "creative_provenance": {
+            "version": "2026-09-10-v1",
+            "canonicalCommit": "4a70be1400cbf3e32e05a7cda6a4ca35d28f1c21",
+            "guideSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "catalogSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "references": [
+              {
+                "id": "bright-kind-cleaning",
+                "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+              }
+            ]
+          },
+          "authorized_asset_hashes": [
+            "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
+          ],
+          "target_role": {
+            "role_slug": "editor",
+            "required_capabilities": [
+              "bricks_edit_content"
+            ],
+            "editability_verified": false
+          },
+          "acceptance_sequence": [
+            "edit",
+            "publish",
+            "public_observation",
+            "restore",
+            "reopen"
+          ],
+          "protected_preview": {
+            "state": "ready",
+            "url": "https://native-api-bricks24-native-canary-20260910.mavnewlife.workers.dev/v1/bricks/sites/native-api/previews/native_8a3c03c11ba24262a40041c7d29a6c84/"
+          },
+          "acceptance_results": [
+            {
+              "step": "edit",
+              "status": "not_run",
+              "evidence_sha256": null
+            },
+            {
+              "step": "publish",
+              "status": "not_run",
+              "evidence_sha256": null
+            },
+            {
+              "step": "public_observation",
+              "status": "not_run",
+              "evidence_sha256": null
+            },
+            {
+              "step": "restore",
+              "status": "not_run",
+              "evidence_sha256": null
+            },
+            {
+              "step": "reopen",
+              "status": "not_run",
+              "evidence_sha256": null
+            }
+          ],
+          "acceptance_transaction_sha256": null,
+          "deployment": {
+            "version": "048eaf36-9226-4a86-860b-50e19cf558c6",
+            "runtime_artifact_version": "2.4-rc",
+            "runtime_artifact_sha256": "a97171e889ff82a92949dff994f10ceeb38cc70d46d7df3d97d3522562c2e887",
+            "artifact_hashes": [
+              "a97171e889ff82a92949dff994f10ceeb38cc70d46d7df3d97d3522562c2e887",
+              "e5544bd61426809a13ee5f6af8e99652fa5f58019d2ed55aaa305931733debd9"
+            ]
+          },
+          "evidence": {
+            "desktop_sha256": null,
+            "mobile_sha256": null,
+            "client_edit_transaction_sha256": null,
+            "resource_measurements_sha256": "4af7c90a9b1f82f5ba2d431e66e0ac70ae64d2a606f4db49167e7a2edb4a6adb"
+          },
+          "revision_receipt": {
+            "receipt_id": "native_8a3c03c11ba24262a40041c7d29a6c84",
+            "canonical_state_version": 7,
+            "canonical_state_revision": "3255b220-cff9-465d-b58e-73859918764c",
+            "canonical_manifest_key": "sites/native-api/markdown/revisions/3255b220-cff9-465d-b58e-73859918764c.json",
+            "canonical_persisted_at": "2026-09-10T20:15:44.801Z",
+            "artifact_sha256": "e5544bd61426809a13ee5f6af8e99652fa5f58019d2ed55aaa305931733debd9",
+            "native_document_hashes": [
+              "de4a6efd1bc3347cfcef1a74f3533c973e9820a9b704a92acba9837f7139ae67",
+              "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+              "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+              "15608f7028a1d7865c1128f80a100b4b299316e21f0e555f81b3bdd061c15930"
+            ],
+            "design_system_version": "design-system-1"
+          },
+          "rollback_receipt": {
+            "receipt_id": "native_f269f86d0666432180b993e609b09a04",
+            "canonical_state_version": 6,
+            "canonical_state_revision": "581090cd-2b48-4547-b642-0d7675d3d237",
+            "canonical_manifest_key": "sites/native-api/markdown/revisions/581090cd-2b48-4547-b642-0d7675d3d237.json",
+            "canonical_persisted_at": "2026-09-10T20:15:20.307Z",
+            "artifact_sha256": "b084e18fb8010bd8d5ff23b937f42491e3d5fa7a803860c47be59028663d5c36",
+            "native_document_hashes": [
+              "0d1d5858922606e8fecfe329cbebafd30f6411f8d7be69f3bec111ef2339c27d",
+              "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+              "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+              "dc3f2eb30b731194bf4dbb5b02d1efb590e5d28fc788d54ebfdbf41ef7263bc9"
+            ],
+            "design_system_version": "design-system-1"
+          },
+          "restoration": {
+            "restore_receipt_id": "restore_763a9d72cc534c4f90fea34d3e217e4c",
+            "restored_from": {
+              "receipt_id": "native_1e35568c9f48487b87bbffeeeaf43b31",
+              "canonical_state_version": 5,
+              "canonical_state_revision": "fca9766e-bfcb-4f66-9566-9535c334ce61",
+              "canonical_manifest_key": "sites/native-api/markdown/revisions/fca9766e-bfcb-4f66-9566-9535c334ce61.json",
+              "canonical_persisted_at": "2026-09-10T19:50:26.550Z",
+              "artifact_sha256": "e5544bd61426809a13ee5f6af8e99652fa5f58019d2ed55aaa305931733debd9",
+              "native_document_hashes": [
+                "de4a6efd1bc3347cfcef1a74f3533c973e9820a9b704a92acba9837f7139ae67",
+                "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+                "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+                "15608f7028a1d7865c1128f80a100b4b299316e21f0e555f81b3bdd061c15930"
+              ],
+              "design_system_version": "design-system-1"
+            },
+            "pre_restore_base": {
+              "receipt_id": "native_f269f86d0666432180b993e609b09a04",
+              "canonical_state_version": 6,
+              "canonical_state_revision": "581090cd-2b48-4547-b642-0d7675d3d237",
+              "canonical_manifest_key": "sites/native-api/markdown/revisions/581090cd-2b48-4547-b642-0d7675d3d237.json",
+              "canonical_persisted_at": "2026-09-10T20:15:20.307Z",
+              "artifact_sha256": "b084e18fb8010bd8d5ff23b937f42491e3d5fa7a803860c47be59028663d5c36",
+              "native_document_hashes": [
+                "0d1d5858922606e8fecfe329cbebafd30f6411f8d7be69f3bec111ef2339c27d",
+                "0de2fd2af8bd4b4dc97dfba98f36bcb07ebeb596801c50cadec083eac2df17b2",
+                "0fdaf3d80ddab36110aa06e58707728bf64305b019baa143f33a75f7bb192bb0",
+                "dc3f2eb30b731194bf4dbb5b02d1efb590e5d28fc788d54ebfdbf41ef7263bc9"
+              ],
+              "design_system_version": "design-system-1"
+            }
+          }
+        }
+      }
+    },
+    "observation": {
+      "path": "/v1/bricks/sites/native-api/previews/native_8a3c03c11ba24262a40041c7d29a6c84/",
+      "status": 200,
+      "wall_ms": 9142,
+      "heading_observed": true
+    }
+  },
+  "replay_verified": true,
+  "poll_verified": true,
+  "exchanges": [
+    {
+      "path": "/v1/bricks/artifacts/b084e18fb8010bd8d5ff23b937f42491e3d5fa7a803860c47be59028663d5c36",
+      "method": "PUT",
+      "status": 200,
+      "wall_ms": 1189
+    },
+    {
+      "path": "/v1/bricks/sites/native-api/revisions",
+      "method": "POST",
+      "status": 200,
+      "wall_ms": 20406
+    },
+    {
+      "path": "/v1/bricks/sites/native-api/restores",
+      "method": "POST",
+      "status": 200,
+      "wall_ms": 10434
+    },
+    {
+      "path": "/v1/bricks/sites/native-api/restores",
+      "method": "POST",
+      "status": 200,
+      "wall_ms": 1108
+    },
+    {
+      "path": "/v1/sites/native-api/operations/native_telemetry_20260910_restore",
+      "method": "GET",
+      "status": 200,
+      "wall_ms": 171
+    }
+  ]
+}
