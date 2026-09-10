@@ -908,5 +908,23 @@
       "Canonical MDI seed generator test requires unavailable host php executable."
     ],
     "screenshots_byte_identical_across_worker_versions": true
-  }
+  },
+  "follow_up_allocations": [
+    {
+      "site_id": "native-engine",
+      "worker_version": "a4c5d612-4d6a-4599-ad19-3bd7d80b45b3",
+      "empty_at_handoff": true,
+      "seed_version": 1,
+      "seed_revision": "ee5555b1-c849-464e-83c5-064f7d359cce",
+      "owner_after_handoff": "BUILD/T actual product engine rehearsal"
+    },
+    {
+      "site_id": "native-sales-rehearsal",
+      "worker_version": "b9d0203a-c61c-45d6-ae05-fce04c87ed69",
+      "empty_at_handoff": true,
+      "seed_version": 1,
+      "seed_revision": "8be31b29-8405-4649-b212-3ea77e4c0660",
+      "owner_after_handoff": "OLE BLU sales-service rehearsal"
+    }
+  ]
 }
