@@ -939,6 +939,9 @@ export async function runPhpunitCommand({
   spec: ExecutionSpec
 }): Promise<string | RuntimeCommandResultEnvelope> {
   const args = spec.args ?? []
+  const processIdentity = boundedProcessIdentity(spec.processIdentity)
+  const junitFile = processIdentity ? `/tmp/wp-codebox-phpunit-junit-${processIdentity}.xml` : "/tmp/wp-codebox-phpunit-junit.xml"
+  await clearPluginPhpunitJunitResult(server, junitFile)
   const phpunitXmlArg = argValue(args, "phpunit-xml")
   const explicitCode = argValue(args, "code") || argValue(args, "code-file")
   const pluginSlug = argValue(args, "plugin-slug")?.trim() || ""
@@ -962,10 +965,8 @@ export async function runPhpunitCommand({
   }
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
-  const processIdentity = boundedProcessIdentity(spec.processIdentity)
   const managedMultisitePreinstalled = !explicitCode && !discoveryOnly && requiresManagedMultisitePreinstall(args, runtimeSpec)
   const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
-  const junitFile = processIdentity ? `/tmp/wp-codebox-phpunit-junit-${processIdentity}.xml` : "/tmp/wp-codebox-phpunit-junit.xml"
   const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit", false) : phpunitRunCode({
     pluginSlug,
@@ -1007,7 +1008,6 @@ export async function runPhpunitCommand({
     throw new Error("wordpress.phpunit requires plugin-slug=<slug> when code/code-file is not provided")
   }
   let response: PlaygroundRunResponse
-  await clearPluginPhpunitJunitResult(server, junitFile)
   try {
     const bootstrapArgs = explicitCode ? args : [...args, "bootstrap=runtime-only"]
     if (managedMultisitePreinstalled) {

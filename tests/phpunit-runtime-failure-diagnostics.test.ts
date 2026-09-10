@@ -32,12 +32,27 @@ await assert.rejects(
   (error: Error) => {
     assert.match(error.message, /wordpress\.phpunit failed with exit code 1/)
     assert.match(error.message, /wordpress\.phpunit structured diagnostics/)
+    assert.match(error.message, /wordpress\.phpunit JUnit artifact/)
     assert.match(error.message, /Bootstrap failed with token: \[redacted\]/)
     assert.match(error.message, /\[diagnostic truncated\]/)
     assert.doesNotMatch(error.message, new RegExp(secret))
     return true
   },
 )
+
+const clearedJunitFiles: string[] = []
+await assert.rejects(
+  () => runPhpunitCommand({
+    artifactRoot,
+    mounts: [],
+    runPlaygroundCommand: async () => ({ exitCode: 0, errors: "", text: "" }),
+    runtimeSpec: wordpressRuntimeSpec({ commands: ["wordpress.phpunit"] }),
+    server: { playground: { unlink: async (path: string) => { clearedJunitFiles.push(path) } } } as never,
+    spec: { command: "wordpress.phpunit", args: ["discovery-only=true", "code=<?php"] },
+  }),
+  /discovery-only cannot be combined/,
+)
+assert.deepEqual(clearedJunitFiles, ["/tmp/wp-codebox-phpunit-junit.xml"])
 
 const captured = await readFile(join(artifactRoot, "files", "phpunit", ".pg-test-result.txt"), "utf8")
 assert.match(captured, /Bootstrap failed with token: \[redacted\]/)

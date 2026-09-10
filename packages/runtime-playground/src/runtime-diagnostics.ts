@@ -34,6 +34,7 @@ export async function persistPluginPhpunitJunitResult(server: PlaygroundCliServe
   }
 
   try {
+    // Playground exposes only whole-file reads; this caps retained host output, not VFS read allocation.
     const contents = await server.playground.readFileAsText(vfsPath)
     return await captureArtifactFile({
       root: join(artifactRoot, "files", "phpunit", ...(namespace ? [namespace] : [])),
