@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, validateRuntimePolicy, type ArtifactBundle, type ArtifactPackageIdentity, type ArtifactPackageProvenance, type Runtime, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, RecipeJsonSchemaValidationError, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, validateRuntimePolicy, type ArtifactBundle, type ArtifactPackageIdentity, type ArtifactPackageProvenance, type Runtime, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
@@ -42,7 +42,19 @@ const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
 const packageRequire = createRequire(import.meta.url)
 export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const options = parseRecipeRunOptions(args)
-  const replayExitCode = await replayWithHostNodeHeap(args, options.hostNodeHeapMiB, (await loadWorkspaceRecipe(options.recipePath)).runtime?.hostNodeHeap)
+  let recipe: WorkspaceRecipe
+  try {
+    recipe = await loadWorkspaceRecipe(options.recipePath)
+  } catch (error) {
+    if (!isRecipeJsonSchemaValidationError(error)) {
+      throw error
+    }
+    const output = recipeJsonSchemaValidationOutput(options, error)
+    if (options.json) await writeRecipeJsonOutput(output, options.outputPath)
+    else printRecipeHumanOutput(output)
+    return 1
+  }
+  const replayExitCode = await replayWithHostNodeHeap(args, options.hostNodeHeapMiB, recipe.runtime?.hostNodeHeap)
   if (replayExitCode !== undefined) return replayExitCode
   if (options.previewLeaseRequested && !options.previewLeaseChild) {
     return startPreviewLeaseRecipeRun({ args, json: options.json, recipePath: options.recipePath, artifactsDirectory: options.artifactsDirectory, runRegistryDirectory: options.runRegistryDirectory, previewHoldSeconds: options.previewHoldSeconds })
@@ -87,6 +99,30 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
   } finally {
     if (outputHeartbeat) clearInterval(outputHeartbeat)
     interruption?.dispose()
+  }
+}
+
+function isRecipeJsonSchemaValidationError(error: unknown): error is RecipeJsonSchemaValidationError {
+  return error instanceof RecipeJsonSchemaValidationError
+    || (error instanceof Error && (error.name === "RecipeJsonSchemaValidationError" || error.message.startsWith("Recipe JSON schema validation failed")))
+}
+
+function recipeJsonSchemaValidationOutput(options: RecipeRunOptions, error: RecipeJsonSchemaValidationError | Error): RecipeRunOutput {
+  const issues = error instanceof RecipeJsonSchemaValidationError
+    ? error.issues.map((issue) => ({ code: issue.keyword, path: issue.path, message: issue.message }))
+    : []
+  return {
+    success: false,
+    schema: "wp-codebox/recipe-run/v1",
+    recipePath: options.recipePath,
+    executions: [],
+    validation: { issues },
+    error: {
+      ...serializeError(error),
+      name: "RecipeJsonSchemaValidationError",
+      code: "recipe-json-schema-validation-failed",
+      issues,
+    },
   }
 }
 
