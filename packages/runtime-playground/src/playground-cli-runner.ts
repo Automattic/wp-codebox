@@ -134,7 +134,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       emitProgress("preview:activating-dependencies", "running", "Activating site features", blueprintSummary)
     }
 
-    const server = useProgrammaticRunner ? await startPlaygroundCliWithDynamicPortRetry(async (port) => {
+    const server = withPhpEnvOnPlaygroundRun(useProgrammaticRunner ? await startPlaygroundCliWithDynamicPortRetry(async (port) => {
       return startProgrammaticPlaygroundServer({
         ...spec,
         preview: {
@@ -192,7 +192,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       } finally {
         await localAssetServer?.close()
       }
-    }, Boolean(spec.preview?.port))
+    }, Boolean(spec.preview?.port)), spec)
 
     emitProgress("preview:connecting-client", "running", "Connecting preview", {
       localUrl: server.serverUrl,
@@ -548,13 +548,31 @@ $wpcb_db_diagnostic['mysqli']['attempted'] = true; $wpcb_db = @mysqli_init(); if
 `
 }
 
-function runtimePhpEnvironment(spec: RuntimeCreateSpec): Record<string, string> | undefined {
+export function runtimePhpEnvironment(spec: RuntimeCreateSpec): Record<string, string> | undefined {
   if (spec.environment.databaseSetup !== "external") return undefined
   const environment = {
     ...(spec.runtimeEnv ?? {}),
     ...resolveRuntimeSecretEnvTargets(spec.secretEnv ?? {}, spec.secretEnvTargets),
   }
   return Object.keys(environment).length > 0 ? environment : undefined
+}
+
+export function playgroundRunOptionsWithPhpEnv<T extends { env?: Record<string, string> }>(options: T, phpEnv: Record<string, string> | undefined): T {
+  if (!phpEnv) return options
+  return { ...options, env: { ...options.env, ...phpEnv } }
+}
+
+function withPhpEnvOnPlaygroundRun(server: PlaygroundCliServer, spec: RuntimeCreateSpec): PlaygroundCliServer {
+  const phpEnv = runtimePhpEnvironment(spec)
+  if (!phpEnv) return server
+  const run = server.playground.run.bind(server.playground)
+  return {
+    ...server,
+    playground: {
+      ...server.playground,
+      run: (options) => run(playgroundRunOptionsWithPhpEnv(options, phpEnv)),
+    },
+  }
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {

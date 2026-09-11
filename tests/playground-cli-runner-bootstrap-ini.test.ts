@@ -19,7 +19,7 @@ const cliModule: PlaygroundCliModule = {
       playground: {
         async run(runOptions) {
           runs.push(runOptions)
-          return { text: options.phpEnv?.DB_PASSWORD ?? "" }
+          return { text: runOptions.env?.DB_PASSWORD ?? "" }
         },
       },
       async [Symbol.asyncDispose]() {},
@@ -120,7 +120,8 @@ try {
   assert.match(sharedAutoPrepend, /getenv\('DB_USER'\) \?: 'root'/)
   assert.match(sharedAutoPrepend, /getenv\('DB_NAME'\) \?: 'runtime'/)
   assert.doesNotMatch(sharedAutoPrepend, /secret/)
-  assert.equal(runs[0]?.env?.DB_PASSWORD, undefined)
+  assert.equal(runs[0]?.env?.DB_PASSWORD, "secret")
+  assert.deepEqual(runs[0]?.env, calls[0].phpEnv)
   const requestWorkerPath = calls[0]["mount-before-install"]?.[3]?.hostPath
   assert.equal(typeof requestWorkerPath, "string")
   assert.doesNotMatch(await readFile(requestWorkerPath as string, "utf8"), /secret/)
