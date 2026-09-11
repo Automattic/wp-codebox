@@ -26,7 +26,7 @@ import { runAbilityCommand, runAdminActionInventoryCommand, runBenchCommand, run
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
-import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
+import { assertPhpWasmExtensionAbi, preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
 import { previewReviewerAccess } from "./preview-reviewer-access.js"
 import { installHostHttpTransportRoute } from "./host-http-transport.js"
 import { wordpressActionAuthNoncePhpCode, wordpressFixtureUserWithoutPassword, wordpressUserSessionFromCommandArgs, type WordPressUserSessionResolution } from "./wordpress-user-sessions.js"
@@ -272,6 +272,12 @@ class PlaygroundRuntime implements Runtime {
 
   static async create(spec: RuntimeCreateSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<PlaygroundRuntime> {
     const phpWasmRuntimeAssetPreflight = await preflightPhpWasmRuntimeAssets({ phpVersion: spec.environment.phpVersion })
+    await assertPhpWasmExtensionAbi({
+      extensions: spec.environment.extensions,
+      phpVersion: phpWasmRuntimeAssetPreflight.phpVersion,
+      phpWasmPath: phpWasmRuntimeAssetPreflight.wasmPath,
+      mode: phpWasmRuntimeAssetPreflight.mode,
+    })
     const runtime = new PlaygroundRuntime({
       ...spec,
       metadata: {
