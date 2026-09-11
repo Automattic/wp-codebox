@@ -565,12 +565,12 @@ export function playgroundRunOptionsWithPhpEnv<T extends { env?: Record<string, 
 function withPhpEnvOnPlaygroundRun(server: PlaygroundCliServer, spec: RuntimeCreateSpec): PlaygroundCliServer {
   const phpEnv = runtimePhpEnvironment(spec)
   if (!phpEnv) return server
-  const run = server.playground.run.bind(server.playground)
+  const inner = server.playground
   return {
     ...server,
     playground: {
-      ...server.playground,
-      run: (options) => run(playgroundRunOptionsWithPhpEnv(options, phpEnv)),
+      ...inner,
+      run: (options) => inner.run(playgroundRunOptionsWithPhpEnv(options, phpEnv)),
     },
   }
 }
