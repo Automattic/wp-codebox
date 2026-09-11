@@ -34,6 +34,17 @@ export interface AssertWorkspaceRecipeJsonSchemaOptions extends WorkspaceRecipeJ
   recipePath?: string
 }
 
+export class RecipeJsonSchemaValidationError extends Error {
+  readonly code = "recipe-json-schema-validation-failed"
+  readonly issues: WorkspaceRecipeJsonSchemaValidationIssue[]
+
+  constructor(message: string, issues: WorkspaceRecipeJsonSchemaValidationIssue[]) {
+    super(message)
+    this.name = "RecipeJsonSchemaValidationError"
+    this.issues = issues
+  }
+}
+
 export type WorkspaceRecipeRuntimeCollectedArtifact =
   | { kind: "path"; index: number; artifact: WorkspaceRecipeDeclaredArtifact }
   | { kind: "typed"; index: number; artifact: WorkspaceRecipeTypedArtifact }
@@ -60,7 +71,7 @@ export function assertWorkspaceRecipeJsonSchema(recipe: unknown, options: Assert
 
   const location = options.recipePath ? ` in ${options.recipePath}` : ""
   const details = result.issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")
-  throw new Error(`Recipe JSON schema validation failed${location}: ${details}`)
+  throw new RecipeJsonSchemaValidationError(`Recipe JSON schema validation failed${location}: ${details}`, result.issues)
 }
 
 export function workspaceRecipeRuntimeCollectedArtifacts(recipe: WorkspaceRecipe): WorkspaceRecipeRuntimeCollectedArtifact[] {
@@ -83,6 +94,9 @@ function jsonPointerToJsonPath(pointer: string, error: ErrorObject): string {
   const segments = pointer.split("/").filter(Boolean).map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"))
   if (error.keyword === "required" && typeof error.params.missingProperty === "string") {
     segments.push(error.params.missingProperty)
+  }
+  if ((error.keyword === "additionalProperties" || error.keyword === "unevaluatedProperties") && typeof error.params.additionalProperty === "string") {
+    segments.push(error.params.additionalProperty)
   }
   let path = "$"
   for (const segment of segments) {
