@@ -176,71 +176,70 @@ export async function applyRecipeRuntimeSetup(args: {
   const extraPluginMounts = preparedExtraPluginMounts(extraPlugins)
   await mountPreparedExtraPlugins(runtime, extraPlugins, extraPluginMounts, phaseExecutor, interruption, "mount_plugins")
 
-  for (const overlay of overlayCopies) {
-    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(copyRuntimeOverlayCode(overlay.source, overlay.target)) }), "setup", -3, `runtime.overlay.copy:${overlay.target}`))
-    interruption?.throwIfInterrupted()
-  }
-
-  for (const overlay of dependencyOverlays) {
-    await awaitRecipe(`dependency-overlay.mount:${overlay.package}`, runtime.mount({
-      type: overlay.type,
-      source: overlay.source,
-      target: overlay.target,
-      mode: overlay.mode,
-      metadata: overlay.metadata,
-    }))
-    interruption?.throwIfInterrupted()
-  }
-
-  const inputMounts: MountSpec[] = []
-  for (const [index, mount] of (recipe.inputs?.mounts ?? []).entries()) {
-    const source = resolve(recipeDirectory, mount.source)
-    const target = inputMountPathMap[index]?.canonicalTarget ?? mount.target
-    const metadata = await inputMountMetadataWithBaseline(source, mount, inputMountBaselinePaths, target)
-    const inputMount: MountSpec = {
-      type: await recipeMountType(source, mount.type),
-      source,
-      target,
-      mode: mount.mode ?? "readwrite",
-      ...(mount.captureArtifacts !== undefined ? { captureArtifacts: mount.captureArtifacts } : {}),
-      ...(mount.phase !== undefined ? { phase: mount.phase } : {}),
-      metadata,
+  await phaseTracker.run("materialize_runtime_inputs", phaseRuntimeInputData(recipe, extraPlugins, stagedFiles, dependencyOverlays), async () => {
+    for (const overlay of overlayCopies) {
+      executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(copyRuntimeOverlayCode(overlay.source, overlay.target)) }), "setup", -3, `runtime.overlay.copy:${overlay.target}`))
+      interruption?.throwIfInterrupted()
     }
-    inputMounts.push(inputMount)
-    await awaitRecipe(`input.mount:${mount.target}`, runtime.mount(inputMount))
-    interruption?.throwIfInterrupted()
-  }
 
-  for (const stagedFile of stagedFiles) {
-    await awaitRecipe(`staged-file.mount:${stagedFile.target}`, runtime.mount({
-      type: stagedFile.type,
-      source: stagedFile.source,
-      target: stagedFile.target,
-      mode: "readwrite",
-      metadata: stagedFile.metadata,
-    }))
-    interruption?.throwIfInterrupted()
-  }
+    for (const overlay of dependencyOverlays) {
+      await awaitRecipe(`dependency-overlay.mount:${overlay.package}`, runtime.mount({
+        type: overlay.type,
+        source: overlay.source,
+        target: overlay.target,
+        mode: overlay.mode,
+        metadata: overlay.metadata,
+      }))
+      interruption?.throwIfInterrupted()
+    }
 
-  const materializableMounts: MountSpec[] = [
-    ...extraPluginMounts,
-    ...inputMounts,
-    ...stagedFiles.map((stagedFile) => ({
-      type: stagedFile.type,
-      source: stagedFile.source,
-      target: stagedFile.target,
-      mode: "readwrite" as const,
-      metadata: stagedFile.metadata,
-    })),
-  ]
-  if (materializableMounts.length > 0 && canMaterializeMounts(runtime)) {
-    await awaitRecipe("input.materialize", () => materializePreparedMounts(runtime, materializableMounts))
-    interruption?.throwIfInterrupted()
-  }
+    const inputMounts: MountSpec[] = []
+    for (const [index, mount] of (recipe.inputs?.mounts ?? []).entries()) {
+      const source = resolve(recipeDirectory, mount.source)
+      const target = inputMountPathMap[index]?.canonicalTarget ?? mount.target
+      const metadata = await inputMountMetadataWithBaseline(source, mount, inputMountBaselinePaths, target)
+      const inputMount: MountSpec = {
+        type: await recipeMountType(source, mount.type),
+        source,
+        target,
+        mode: mount.mode ?? "readwrite",
+        ...(mount.captureArtifacts !== undefined ? { captureArtifacts: mount.captureArtifacts } : {}),
+        ...(mount.phase !== undefined ? { phase: mount.phase } : {}),
+        metadata,
+      }
+      inputMounts.push(inputMount)
+      await awaitRecipe(`input.mount:${mount.target}`, runtime.mount(inputMount))
+      interruption?.throwIfInterrupted()
+    }
 
-  // Discovery inventories mounted files only. Running setup PHP here would
-  // activate dependencies before the discovery command can enforce its
-  // no-bootstrap boundary.
+    for (const stagedFile of stagedFiles) {
+      await awaitRecipe(`staged-file.mount:${stagedFile.target}`, runtime.mount({
+        type: stagedFile.type,
+        source: stagedFile.source,
+        target: stagedFile.target,
+        mode: "readwrite",
+        metadata: stagedFile.metadata,
+      }))
+      interruption?.throwIfInterrupted()
+    }
+
+    const materializableMounts: MountSpec[] = [
+      ...extraPluginMounts,
+      ...inputMounts,
+      ...stagedFiles.map((stagedFile) => ({
+        type: stagedFile.type,
+        source: stagedFile.source,
+        target: stagedFile.target,
+        mode: "readwrite" as const,
+        metadata: stagedFile.metadata,
+      })),
+    ]
+    if (materializableMounts.length > 0 && canMaterializeMounts(runtime)) {
+      await awaitRecipe("input.materialize", () => materializePreparedMounts(runtime, materializableMounts))
+      interruption?.throwIfInterrupted()
+    }
+  })
+
   if (recipeHasPhpunitDiscoveryOnly(recipe)) {
     return { executions }
   }
@@ -530,6 +529,17 @@ function phasePluginMountData(extraPlugins: PreparedExtraPlugin[]): Record<strin
   return {
     count: extraPlugins.length,
     plugins: extraPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, target: plugin.target, loadAs: plugin.loadAs })),
+  }
+}
+
+function phaseRuntimeInputData(recipe: WorkspaceRecipe, extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], dependencyOverlays: PreparedDependencyOverlay[]): Record<string, unknown> {
+  const inputMounts = recipe.inputs?.mounts ?? []
+  return {
+    extraPluginCount: extraPlugins.length,
+    inputMountCount: inputMounts.length,
+    stagedFileCount: stagedFiles.length,
+    dependencyOverlayCount: dependencyOverlays.length,
+    inputMounts: inputMounts.map((mount) => ({ target: mount.target, mode: mount.mode ?? "readwrite", type: mount.type })),
   }
 }
 

@@ -363,6 +363,8 @@ function classifyRecipePhaseFailure(phase: string): string {
       return "startup"
     case "mount_plugins":
       return "plugin_mount"
+    case "materialize_runtime_inputs":
+      return "mount_materialization"
     case "activate_plugins":
       return "plugin_activation"
     case "import_fixture_databases":

@@ -324,7 +324,7 @@ export interface RecipeDiagnosticArtifactRef {
 
 export type RecipePhasedPluginInputStage = "collect" | "project" | "resolve" | "mount" | "activate" | "readiness"
 
-export type RecipePhaseName = "provision_runtime_services" | "runtime_startup" | "mount_plugins" | "activate_plugins" | "collect_phased_plugin_input" | "project_phased_plugin_input" | "resolve_phased_plugin_input" | "mount_phased_plugins" | "activate_phased_plugins" | "phased_plugin_readiness" | "run_blueprint_steps" | "apply_distribution" | "import_fixture_databases" | "run_distribution_setup_artifacts" | "run_distribution_startup_probes" | "run_workloads" | "run_adversarial_campaigns" | "run_probes" | "collect_artifacts"
+export type RecipePhaseName = "provision_runtime_services" | "runtime_startup" | "mount_plugins" | "materialize_runtime_inputs" | "activate_plugins" | "collect_phased_plugin_input" | "project_phased_plugin_input" | "resolve_phased_plugin_input" | "mount_phased_plugins" | "activate_phased_plugins" | "phased_plugin_readiness" | "run_blueprint_steps" | "apply_distribution" | "import_fixture_databases" | "run_distribution_setup_artifacts" | "run_distribution_startup_probes" | "run_workloads" | "run_adversarial_campaigns" | "run_probes" | "collect_artifacts"
 
 export interface RecipePhaseEvidence {
   schema: "wp-codebox/recipe-phase-evidence/v1"

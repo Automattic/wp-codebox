@@ -46,6 +46,95 @@ export async function assertPhpWasmExternalExtensionsSupported(extensions: reado
   }
 }
 
+const PHP_ABI_IMPORT_PATTERN = /^(php_|zend_|convert_to_|_emalloc|_efree|_estrdup|_safe_emalloc)/
+const phpWasmExportCache = new Map<string, Set<string>>()
+
+export class PhpWasmExtensionAbiError extends Error {
+  readonly code = "wp-codebox-php-wasm-extension-abi-mismatch"
+  readonly diagnostic: { extension: string; phpVersion: string; missingSymbols: string[] }
+
+  constructor(diagnostic: { extension: string; phpVersion: string; missingSymbols: string[] }) {
+    const message = `PHP.wasm extension '${diagnostic.extension}' imports symbols the ${diagnostic.phpVersion} runtime does not export: ${diagnostic.missingSymbols.join(", ")}.`
+    super(message)
+    this.name = "PhpWasmExtensionAbiError"
+    this.diagnostic = diagnostic
+  }
+}
+
+export function phpWasmExtensionMissingAbiSymbols(extensionWasm: Uint8Array, phpExportNames: Iterable<string>): string[] {
+  const phpExports = phpExportNames instanceof Set ? phpExportNames : new Set(phpExportNames)
+  const imports = WebAssembly.Module.imports(webAssemblyModuleFromBytes(extensionWasm))
+  return [...new Set(imports
+    .filter((entry) => entry.module === "env" && entry.kind === "function" && PHP_ABI_IMPORT_PATTERN.test(entry.name) && !phpExports.has(entry.name))
+    .map((entry) => entry.name))].sort()
+}
+
+function webAssemblyModuleFromBytes(bytes: Uint8Array): WebAssembly.Module {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  return new WebAssembly.Module(copy)
+}
+
+export async function assertPhpWasmExtensionAbi(options: {
+  extensions?: ReadonlyArray<{ manifest: string }>
+  phpVersion: string
+  phpWasmPath: string
+  mode?: "jspi" | "asyncify"
+}): Promise<void> {
+  if (!options.extensions || options.extensions.length === 0) {
+    return
+  }
+
+  const phpExports = await phpWasmExportNames(options.phpWasmPath)
+  const mode = options.mode ?? "jspi"
+  for (const extension of options.extensions) {
+    const artifactPath = await resolveExtensionArtifactPath(extension.manifest, options.phpVersion, mode)
+    if (!artifactPath) continue
+    const missingSymbols = phpWasmExtensionMissingAbiSymbols(await readFile(artifactPath), phpExports)
+    if (missingSymbols.length > 0) {
+      throw new PhpWasmExtensionAbiError({
+        extension: extension.manifest,
+        phpVersion: options.phpVersion,
+        missingSymbols,
+      })
+    }
+  }
+}
+
+async function phpWasmExportNames(phpWasmPath: string): Promise<Set<string>> {
+  const cached = phpWasmExportCache.get(phpWasmPath)
+  if (cached) return cached
+  const names = new Set(WebAssembly.Module.exports(webAssemblyModuleFromBytes(await readFile(phpWasmPath))).map((entry) => entry.name))
+  phpWasmExportCache.set(phpWasmPath, names)
+  return names
+}
+
+async function resolveExtensionArtifactPath(manifestPath: string, phpVersion: string, mode: "jspi" | "asyncify"): Promise<string | undefined> {
+  if (!existsSync(manifestPath)) {
+    throw new PhpWasmExtensionAbiError({
+      extension: manifestPath,
+      phpVersion,
+      missingSymbols: [`missing-manifest:${manifestPath}`],
+    })
+  }
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { artifacts?: Array<{ phpVersion?: unknown; sourcePath?: unknown }> }
+  const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : []
+  const matching = artifacts.filter((artifact) => artifact.phpVersion === phpVersion && typeof artifact.sourcePath === "string")
+  const preferred = matching.find((artifact) => String(artifact.sourcePath).includes(mode)) ?? matching[0]
+  if (!preferred || typeof preferred.sourcePath !== "string") {
+    return undefined
+  }
+  const artifactPath = join(dirname(manifestPath), preferred.sourcePath)
+  if (!existsSync(artifactPath)) {
+    throw new PhpWasmExtensionAbiError({
+      extension: manifestPath,
+      phpVersion,
+      missingSymbols: [`missing-artifact:${preferred.sourcePath}`],
+    })
+  }
+  return artifactPath
+}
+
 const repairHint = "Repair the PHP wasm runtime package by reinstalling dependencies, for example: remove node_modules and package-lock drift, then run npm install; if using a package cache, clear the broken @php-wasm package cache first."
 const compiledWasmCache = new Map<string, PhpWasmRuntimeAssetPreflight>()
 const requireFromHere = createRequire(import.meta.url)
