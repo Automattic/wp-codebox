@@ -24,7 +24,7 @@ interface ProgrammaticPHP {
   mount(vfsPath: string, mountHandler: unknown): Promise<unknown>
   onMessage(listener: (data: string) => Promise<string | void> | string | void): () => Promise<void>
   readFileAsText(path: string): string
-  run(options: { code: string } | { scriptPath: string }): Promise<ProgrammaticPHPResponse>
+  run(options: ({ code: string } | { scriptPath: string }) & { env?: Record<string, string> }): Promise<ProgrammaticPHPResponse>
   unlink(path: string): void
   writeFile(path: string, contents: string): void
 }
@@ -217,7 +217,7 @@ async function applyBlueprint(php: ProgrammaticPHP, spec: RuntimeCreateSpec): Pr
   await compiled.run(php as never)
 }
 
-async function runPhp(php: ProgrammaticPHP, options: { code: string } | { scriptPath: string }): Promise<PlaygroundServerRunResponse> {
+async function runPhp(php: ProgrammaticPHP, options: ({ code: string } | { scriptPath: string }) & { env?: Record<string, string> }): Promise<PlaygroundServerRunResponse> {
   const response = await php.run(options)
   return normalizePhpResponse(response)
 }
