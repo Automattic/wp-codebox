@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { getCommandDefinition } from "../packages/runtime-core/src/command-registry.js"
 import { assertEditorMutationPostcondition, captureEditorIdleCanvas, captureEditorState, captureEditorValidity, editorCommandWordPressUrl, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, summarizeEditorPresentation, type EditorStateSnapshot, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, resolveEditorOpenTarget } from "../packages/runtime-playground/src/editor-actions.js"
@@ -394,6 +395,11 @@ assert.equal(nestedValidity.warnings[0]?.clientId, "nested-invalid")
 const frontPageTarget = editorOpenTargetFromArgs(["target=front-page"])
 assert.equal(frontPageTarget.kind, "front-page")
 assert.equal(frontPageTarget.url, "")
+const canvasProbeArgs = getCommandDefinition("wordpress.editor-canvas-probe")?.acceptedArgs ?? []
+for (const name of ["target", "post-id", "post-slug", "post-type", "url"]) {
+  assert.equal(canvasProbeArgs.some((arg) => arg.name === name), true, `editor-canvas-probe accepts ${name}`)
+}
+assert.equal(canvasProbeArgs.find((arg) => arg.name === "url")?.required, undefined)
 const editorRuntimeSpec = { wp: "latest", environment: {} } as never
 assert.equal(editorCommandWordPressUrl({ serverUrl: "http://preview.test", wordpressUrl: "http://wordpress.test" } as never), "http://wordpress.test")
 assert.equal(editorCommandWordPressUrl({ serverUrl: "http://wordpress.test" } as never), "http://wordpress.test")

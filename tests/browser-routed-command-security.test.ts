@@ -78,7 +78,9 @@ test("editor presentation contract isolates framed JSON from PHP diagnostics", (
 test("real browser commands sanitize console, artifacts, stdout, and failure stderr", async () => {
   const httpServer = createServer((request, response) => {
     response.setHeader("content-type", "text/html")
-    response.end(request.url?.includes("post=4")
+    response.end(request.url?.includes("post=7")
+      ? editorHtml
+      : request.url?.includes("post=4")
       ? delayedPostEditorHtml
       : request.url?.includes("post=2")
         ? missingPresentationEditorHtml
@@ -137,7 +139,9 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
   const runPlaygroundCommand = async (command: string) => ({
     text: command === "wordpress.editor-open.capture-presentation-contract"
       ? editorPresentationContractOutput({ identities: GROWING_PRESENTATION_IDENTITIES, complete: true })
-      : "[]",
+      : command === "wordpress.editor-canvas-probe.resolve-front-page"
+        ? "7"
+        : "[]",
     exitCode: 0,
   })
 
@@ -399,9 +403,10 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
     await withTempDir("wp-codebox-real-editor-canvas-security-", async (artifactRoot) => {
       const result = await runEditorCanvasProbeCommand({
         artifactRoot,
+        runPlaygroundCommand,
         runtimeSpec,
         server,
-        spec: { command: "wordpress.editor-canvas-probe", args: [`url=${PUBLIC_URL}`, "route-host=routed.test", "timeout=5s"] },
+        spec: { command: "wordpress.editor-canvas-probe", args: ["target=front-page", "route-host=routed.test", "timeout=5s"] },
       })
       await assertCommandSurfacesSafe(result, artifactRoot, ["files/browser/editor-canvas-summary.json"])
     })

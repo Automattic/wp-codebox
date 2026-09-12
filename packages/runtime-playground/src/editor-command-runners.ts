@@ -10,7 +10,7 @@ import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicyIsActive,
 import { browserCommandResult } from "./browser-result-sanitization.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
-import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep, type EditorBlockSpec, type EditorBlockTarget, type EditorOpenTarget } from "./editor-actions.js"
+import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep, type EditorBlockSpec, type EditorBlockTarget, type EditorOpenTarget, type RunPlaygroundCommand } from "./editor-actions.js"
 import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { serializeBrowserError } from "./browser-metrics.js"
@@ -49,20 +49,24 @@ function editorCommandPreviewTopology(args: string[], runtimeSpec: RuntimeCreate
 
 export async function runEditorCanvasProbeCommand({
   artifactRoot,
+  runPlaygroundCommand,
   runtimeSpec,
   server,
   spec,
 }: {
   artifactRoot: string
+  runPlaygroundCommand: RunPlaygroundCommand
   runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
-  const urlArg = argValue(args, "url")?.trim()
-  if (!urlArg) {
-    throw new Error("wordpress.editor-canvas-probe requires url=<path-or-url>")
-  }
+  const target = await resolveEditorOpenTarget(editorOpenTargetFromArgs(args), {
+    command: "wordpress.editor-canvas-probe",
+    runPlaygroundCommand,
+    runtimeSpec,
+    server,
+  })
 
   const capture = new Set(commaListArg(args, "capture"))
   for (const item of capture) {
@@ -79,7 +83,7 @@ export async function runEditorCanvasProbeCommand({
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
   const previewOrigins = topology.origins
-  const targetUrl = topology.resolveUrl(urlArg)
+  const targetUrl = topology.resolveUrl(target.url)
   const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-canvas-probe", operation: "editor-canvas-probe" })
   const screenshotPath = artifactSession.absolutePath("editor-canvas-screenshot.png")
   const startedAt = now()

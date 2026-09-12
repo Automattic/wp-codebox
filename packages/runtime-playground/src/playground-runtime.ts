@@ -929,7 +929,7 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     let result: Awaited<ReturnType<typeof runEditorCanvasProbeCommand>>
     try {
-      result = await runEditorCanvasProbeCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, server, spec })
+      result = await runEditorCanvasProbeCommand({ artifactRoot: this.artifactRoot, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), runtimeSpec: this.spec, server, spec })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)
