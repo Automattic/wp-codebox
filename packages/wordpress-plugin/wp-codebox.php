@@ -77,6 +77,7 @@ require_once __DIR__ . '/src/class-wp-codebox-preview-options.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-package-executor.php';
 require_once __DIR__ . '/src/class-wp-codebox-api.php';
 require_once __DIR__ . '/src/class-wp-codebox-abilities.php';
+require_once __DIR__ . '/src/class-wp-codebox-agents-md-section.php';
 
 if ( defined( 'WP_CLI' ) && WP_CLI ) {
 	require_once __DIR__ . '/src/class-wp-codebox-cli-command.php';
@@ -94,6 +95,7 @@ add_action( 'wp_agents_api_init', array( WP_Codebox_Agents_API_Adapter::class, '
 add_action( 'plugins_loaded', array( WP_Codebox_Php_Ai_Client_Browser_Provider_Adapter::class, 'register' ), 20 );
 new WP_Codebox_Abilities();
 WP_Codebox_Browser_Provider_Bridge::register();
+WP_Codebox_Agents_Md_Section::register();
 
 if ( defined( 'WP_CLI' ) && WP_CLI ) {
 	WP_Codebox_CLI_Command::register();

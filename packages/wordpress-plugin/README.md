@@ -331,6 +331,17 @@ an external adapter can consume the verified artifact payload and record adapter
 metadata, PR URL, branch, commit, and artifact digest without WP Codebox calling
 any product-specific apply-back system.
 
+## Agent Context Section
+
+The plugin registers a `wp-codebox` section for the `agents-md` context on the
+Agents API context section registry (`WP_Agent_Context_Section_Registry`), so any
+host that composes `AGENTS.md` from registered sections surfaces Codebox routing,
+safety, and discovery guidance to coding agents. Registration is a no-op when the
+substrate class is not loaded; no host-specific composer is referenced.
+
+The rendered WP-CLI prefix defaults to `wp --path=<ABSPATH>` and can be adjusted
+through the `wp_codebox_agents_md_wp_cli_cmd` filter.
+
 ## Configuration
 
 Runtime components can be supplied by ability input, the
