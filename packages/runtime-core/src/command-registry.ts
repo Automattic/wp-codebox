@@ -1186,9 +1186,13 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.editor-canvas-probe",
-    description: "Open a WordPress editor URL and wait for the iframe-backed block canvas to become visible, non-loading, and populated before capturing selector diagnostics and optional canvas screenshot evidence.",
+    description: "Open a WordPress editor target and wait for the iframe-backed block canvas to become visible, non-loading, and populated before capturing selector diagnostics and optional canvas screenshot evidence.",
     acceptedArgs: [
-      { name: "url", description: "Editor path or absolute URL to visit.", required: true, format: "path or URL" },
+      { name: "target", description: "Editor target to open; defaults to post-new. Use front-page to open the site's configured static front page.", format: "post-new|site|front-page" },
+      { name: "post-id", description: "Existing post ID to open in the post editor.", format: "positive integer" },
+      { name: "post-slug", description: "Existing post slug or hierarchical path to resolve and open in the post editor.", format: "post slug or path" },
+      { name: "post-type", description: "Post type for post-new, post-id, or post-slug targets; defaults to post.", format: "post type slug" },
+      { name: "url", description: "Explicit editor path or absolute URL to open instead of resolving a target.", format: "path or URL" },
       { name: "iframe-selector", description: "Editor canvas iframe selector; defaults to iframe[name=\"editor-canvas\"].", format: "CSS selector" },
       { name: "layout-selector", description: "Canvas layout selector inside the editor iframe; defaults to .block-editor-block-list__layout.", format: "CSS selector" },
       { name: "block-selector", description: "Block selector inside the editor canvas layout; defaults to .block-editor-block-list__block, [data-block].", format: "CSS selector" },
