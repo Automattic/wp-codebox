@@ -1713,10 +1713,6 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
   }
 
   if (step.command === "wordpress.editor-canvas-probe") {
-    if (!recipeStepArgValue(step.args ?? [], "url")?.trim()) {
-      addIssue("missing-url", `${path}.args`, "wordpress.editor-canvas-probe requires url=<path-or-url>.")
-    }
-
     const timeoutMs = recipeStepArgValue(step.args ?? [], "timeout-ms") ?? recipeStepArgValue(step.args ?? [], "timeoutMs")
     if (timeoutMs && !/^[1-9]\d*$/.test(timeoutMs)) {
       addIssue("invalid-timeout-ms", `${path}.args`, "wordpress.editor-canvas-probe timeout-ms must be a positive integer.")
