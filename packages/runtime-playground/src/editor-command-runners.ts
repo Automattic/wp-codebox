@@ -109,6 +109,7 @@ export async function runEditorCanvasProbeCommand({
       await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
     const page = context ? await context.newPage() : await browser.newPage()
+    await installWordPressAdminAuthCookies({ command: "wordpress.editor-canvas-probe", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: false,
