@@ -16,6 +16,7 @@ await withTempDir("wp-codebox-recipe-validation-descriptors-", async (recipeDire
         { command: "wordpress.browser-actions", args: ["capture=steps,bogus", "timeout=forever"] },
         { command: "wordpress.browser-scenario", args: ["capture=performance,bogus", "step-timeout=forever"] },
         { command: "wordpress.editor-actions", args: ["capture=steps,bogus", "wait-timeout=forever"] },
+        { command: "wordpress.editor-canvas-probe", args: ["target=front-page"] },
       ],
     },
   }
@@ -42,6 +43,7 @@ await withTempDir("wp-codebox-recipe-validation-descriptors-", async (recipeDire
     { code: "invalid-duration", path: "$.workflow.steps[3].args", message: "wordpress.editor-actions wait-timeout must look like 500ms or 2s." },
     { code: "invalid-capture", path: "$.workflow.steps[3].args", message: "wordpress.editor-actions capture does not support: bogus" },
   ])
+  assert.deepEqual(issues.filter((issue) => issue.path === "$.workflow.steps[4].args"), [])
 })
 
 await withTempDir("wp-codebox-recipe-geolocation-validation-", async (recipeDirectory) => {
