@@ -136,14 +136,18 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
       },
     },
   } as RuntimeCreateSpec
-  const runPlaygroundCommand = async (command: string) => ({
-    text: command === "wordpress.editor-open.capture-presentation-contract"
+  let editorCanvasAuthCalls = 0
+  const runPlaygroundCommand = async (command: string) => {
+    if (command === "wordpress.editor-canvas-probe.auth") editorCanvasAuthCalls += 1
+    return {
+      text: command === "wordpress.editor-open.capture-presentation-contract"
       ? editorPresentationContractOutput({ identities: GROWING_PRESENTATION_IDENTITIES, complete: true })
       : command === "wordpress.editor-canvas-probe.resolve-front-page"
         ? "7"
         : "[]",
-    exitCode: 0,
-  })
+      exitCode: 0,
+    }
+  }
 
   try {
     await withTempDir("wp-codebox-real-browser-actions-security-", async (artifactRoot) => {
@@ -409,6 +413,7 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         spec: { command: "wordpress.editor-canvas-probe", args: ["target=front-page", "route-host=routed.test", "timeout=5s"] },
       })
       await assertCommandSurfacesSafe(result, artifactRoot, ["files/browser/editor-canvas-summary.json"])
+      assert.equal(editorCanvasAuthCalls, 1)
     })
 
     await withTempDir("wp-codebox-real-multi-actor-security-", async (artifactRoot) => {
