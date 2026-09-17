@@ -351,13 +351,56 @@ function blueprintWithWpConfigDefines(blueprint: unknown, defines: JsonObject): 
   }
 }
 
+
+/**
+ * Repair `site_admins` after Playground's `enableMultisite` step.
+ *
+ * The network install leaves `site_admins` as an empty string rather than the
+ * `array( $admin_login )` core's populate_network() normally writes —
+ * `admin_user_id` and `admin_email` come out correct, so the install only
+ * partially succeeds. An empty value is worse than a missing one: core falls
+ * back to a sane default only when the option is absent
+ * (`get_site_option( 'site_admins', array( 'admin' ) )`), so the empty string
+ * is returned instead and reaches `in_array()`:
+ *
+ *   TypeError: in_array(): Argument #2 ($haystack) must be of type array,
+ *   string given (wp-includes/capabilities.php)
+ *
+ * That fatals `is_super_admin()`, `grant_super_admin()` and every
+ * `manage_network_*` capability check, so any multisite suite touching network
+ * capabilities dies inside core rather than failing usefully.
+ *
+ * Idempotent and conservative: only writes when the current value is not a
+ * non-empty array, and derives the login from `admin_user_id` rather than
+ * assuming "admin".
+ */
+function multisiteSiteAdminsRepairPhp(): string {
+  return `
+$admins = get_site_option('site_admins');
+if (!is_array($admins) || $admins === array()) {
+    $login = null;
+    $admin_user_id = (int) get_site_option('admin_user_id');
+    if ($admin_user_id > 0) {
+        $user = get_userdata($admin_user_id);
+        if ($user && $user->user_login !== '') { $login = $user->user_login; }
+    }
+    if ($login === null) {
+        $first = get_users(array('number' => 1, 'orderby' => 'ID', 'order' => 'ASC', 'fields' => array('user_login')));
+        if (!empty($first)) { $login = $first[0]->user_login; }
+    }
+    if ($login !== null) { update_site_option('site_admins', array($login)); }
+}`
+}
+
 function blueprintWithMultisite(blueprint: unknown, multisite: boolean): unknown {
   if (!multisite) {
     return blueprint
   }
 
+  const multisiteSteps = [{ step: "enableMultisite" }, { step: "runPHP", code: multisiteSiteAdminsRepairPhp() }]
+
   if (!isPlainObject(blueprint)) {
-    return { steps: [{ step: "enableMultisite" }] }
+    return { steps: multisiteSteps }
   }
 
   const existingSteps = Array.isArray(blueprint.steps) ? blueprint.steps : []
@@ -366,7 +409,7 @@ function blueprintWithMultisite(blueprint: unknown, multisite: boolean): unknown
   }
   return {
     ...blueprint,
-    steps: [{ step: "enableMultisite" }, ...existingSteps],
+    steps: [...multisiteSteps, ...existingSteps],
   }
 }
 

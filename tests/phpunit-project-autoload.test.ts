@@ -930,10 +930,15 @@ const multisiteRecipe = buildWordPressPhpunitRecipe({
   multisite: true,
   blueprint: { steps: [{ step: "setSiteOptions", options: { blogname: "Network tests" } }] },
 })
-assert.deepEqual((multisiteRecipe.runtime.blueprint as { steps: unknown[] }).steps, [
-  { step: "enableMultisite" },
+const multisiteSteps = (multisiteRecipe.runtime.blueprint as { steps: Array<{ step?: string; code?: string }> }).steps
+assert.equal(multisiteSteps[0]?.step, "enableMultisite", "multisite PHPUnit recipes must boot Playground as multisite before running tests")
+// enableMultisite leaves site_admins as an empty string, which fatals core's
+// capability checks; the repair step must follow it before anything else runs.
+assert.equal(multisiteSteps[1]?.step, "runPHP", "multisite recipes must repair site_admins immediately after enableMultisite")
+assert.ok(multisiteSteps[1]?.code?.includes("site_admins"), "the step after enableMultisite must be the site_admins repair")
+assert.deepEqual(multisiteSteps.slice(2), [
   { step: "setSiteOptions", options: { blogname: "Network tests" } },
-], "multisite PHPUnit recipes must boot Playground as multisite before running tests")
+], "caller-supplied blueprint steps must be preserved after the multisite bootstrap")
 assert.equal(multisiteRecipe.runtime.preview?.siteUrl, "http://localhost", "multisite PHPUnit recipes need a canonical site URL without the dynamic Playground port")
 assert.ok(multisiteRecipe.workflow.steps[0].args.includes("multisite=1"))
 
