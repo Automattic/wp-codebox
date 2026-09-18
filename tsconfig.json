@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/runtime-core" },
     { "path": "./packages/runtime-playground" },
+    { "path": "./packages/runtime-native" },
     { "path": "./packages/cli" }
   ]
 }

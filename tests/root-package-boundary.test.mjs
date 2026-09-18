@@ -9,7 +9,7 @@ const root = resolve(import.meta.dirname, "..")
 const rootPackage = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"))
 const rootLock = JSON.parse(await readFile(resolve(root, "npm-shrinkwrap.json"), "utf8"))
 
-assert.deepEqual(rootPackage.workspaces, ["packages/cli", "packages/runtime-core", "packages/runtime-playground", "packages/wordpress-plugin"])
+assert.deepEqual(rootPackage.workspaces, ["packages/cli", "packages/runtime-core", "packages/runtime-native", "packages/runtime-playground", "packages/wordpress-plugin"])
 assert.equal(rootPackage.workspaces.includes("packages/runtime-cloudflare"), false, "runtime-cloudflare must not join the default install lane")
 assert.equal(rootLock.packages?.["packages/runtime-cloudflare"], undefined, "the root shrinkwrap must not retain Cloudflare package metadata")
 for (const dependency of ["@cloudflare/workers-types", "wrangler"]) {
