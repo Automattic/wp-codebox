@@ -18,7 +18,7 @@ import { argValue, cleanWpCliOutput, runWithTemporaryWpCliScript, shellArgv, wor
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { observeHttpResponse as observeHttpResponseArtifact, observeWordPressState as observeWordPressStateArtifact } from "./observation-artifacts.js"
 import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, terminalizeOnPhpWasmRuntimeRejection, type PlaygroundRunResponse } from "./playground-command-errors.js"
-import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground-cli-runner.js"
+import { runtimePhpEnvironment, startPlaygroundCliServer, type PlaygroundCliModule } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { materializePlaygroundMountsFromVfs, materializePlaygroundStagedFiles } from "./mount-materialization.js"
@@ -1807,9 +1807,10 @@ class PlaygroundRuntime implements Runtime {
   private async runPlaygroundCommand(command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse> {
     try {
       const requestWorkerEnvironment = this.requestWorkerExecutions.getStore()
+      const phpEnv = runtimePhpEnvironment(this.spec)
       if (requestWorkerEnvironment && "code" in options && server.requestWorkerEndpoint) {
         await this.prepareRequestWorker(server)
-        const response = await this.executeRequestWorker(server, options.code, requestWorkerEnvironment, this.executionSignals.getStore())
+        const response = await this.executeRequestWorker(server, options.code, { ...requestWorkerEnvironment, ...phpEnv }, this.executionSignals.getStore())
         return { text: response.text, exitCode: response.ok ? 0 : 1, ...(!response.ok ? { errors: response.text } : {}) }
       }
       const response = await abortable(server.playground.run(options), this.executionSignals.getStore())
