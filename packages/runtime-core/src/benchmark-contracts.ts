@@ -55,6 +55,8 @@ export interface BenchmarkScenarioRecord {
   source: BenchmarkScenarioSource
   file?: string
   iterations: number
+  status?: "passed" | "skipped"
+  skip_reason?: string
   metrics: Record<string, BenchmarkMetricRecord>
   memory?: {
     peak_bytes?: number
@@ -65,6 +67,15 @@ export interface BenchmarkScenarioRecord {
   artifacts?: Record<string, BenchmarkArtifactRef | BenchmarkInlineArtifact>
   metadata?: Record<string, unknown>
   provenance?: Record<string, unknown>
+}
+
+export interface BenchmarkCompleteness {
+  status: "complete" | "incomplete"
+  required: {
+    total: number
+    passed: number
+    skipped: number
+  }
 }
 
 export interface BenchmarkRunProvenance {
@@ -98,6 +109,7 @@ export interface BenchResults {
     betweenScenarios: string
     events?: Array<Record<string, unknown>>
   }
+  completeness?: BenchmarkCompleteness
   scenarios: BenchmarkScenarioRecord[]
   diagnostics: BenchmarkDiagnostic[]
   artifacts?: Record<string, BenchmarkArtifactRef>
@@ -213,6 +225,7 @@ export function createBenchResultsJsonSchema(): BenchmarkJsonSchema {
       warmup_iterations: { type: "integer", minimum: 0 },
       lifecycle: { $ref: "#/$defs/lifecycle" },
       reset_policy: { $ref: "#/$defs/resetPolicy" },
+      completeness: { $ref: "#/$defs/completeness" },
       scenarios: { type: "array", items: { $ref: "#/$defs/scenario" } },
       diagnostics: { type: "array", items: { $ref: "#/$defs/diagnostic" } },
       artifacts: { $ref: "#/$defs/artifactMap" },
@@ -337,6 +350,24 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
         events: { type: "array", items: { type: "object", additionalProperties: true } },
       },
     },
+    completeness: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "required"],
+      properties: {
+        status: { enum: ["complete", "incomplete"] },
+        required: {
+          type: "object",
+          additionalProperties: false,
+          required: ["total", "passed", "skipped"],
+          properties: {
+            total: { type: "integer", minimum: 0 },
+            passed: { type: "integer", minimum: 0 },
+            skipped: { type: "integer", minimum: 0 },
+          },
+        },
+      },
+    },
     scenario: {
       type: "object",
       additionalProperties: false,
@@ -345,7 +376,9 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
         id: { type: "string", minLength: 1 },
         source: { type: "string", minLength: 1 },
         file: { type: "string" },
-        iterations: { type: "integer", minimum: 1 },
+        iterations: { type: "integer", minimum: 0 },
+        status: { enum: ["passed", "skipped"] },
+        skip_reason: { type: "string", minLength: 1 },
         metrics: { type: "object", additionalProperties: { $ref: "#/$defs/metric" } },
         memory: {
           type: "object",
