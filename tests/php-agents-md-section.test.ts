@@ -84,6 +84,7 @@ for (const verb of [
   "codebox run-wordpress-workload",
   "codebox run-runtime-task",
   "codebox run-fuzz-suite",
+  "codebox browser-session create",
   "codebox resolve-runtime-requirements",
   "codebox artifacts inspect",
   "codebox artifacts preflight-apply",
