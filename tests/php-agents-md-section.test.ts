@@ -77,7 +77,7 @@ assert.equal(result.freshness, "generated")
 
 const rendered: string = result.rendered
 assert.ok(rendered.startsWith("## WP Codebox\n"), "section starts with its heading")
-for (const heading of ["**Default routing**", "**Discovery**"]) {
+for (const heading of ["**Default routing**", "**Safety**", "**Discovery**"]) {
   assert.ok(rendered.includes(heading), `contains ${heading}`)
 }
 for (const verb of [
@@ -96,8 +96,17 @@ assert.ok(
   "uses the host-filtered WP-CLI prefix"
 )
 assert.ok(!rendered.includes(result.default_cmd + " codebox"), "filtered prefix replaces the default")
+assert.ok(rendered.includes("host install stays intact"), "states host isolation as a capability")
+assert.ok(rendered.includes("preflight-apply"), "describes the apply-back review path")
+assert.ok(rendered.includes("--approved-files"), "apply-back is bounded to approved files")
+assert.ok(rendered.includes("secret_env"), "credentials travel as secret_env names")
+assert.ok(
+  rendered.includes("orchestrator environment"),
+  "secret values stay in the orchestrator environment"
+)
+assert.ok(!/cannot touch/i.test(rendered), "host isolation is stated positively")
+assert.ok(!/never print secret/i.test(rendered), "credential secrecy is stated positively")
 assert.ok(!rendered.includes("run-agent-task"), "nested agent-task CLI stays outside this section")
-assert.ok(!rendered.includes("preflight-apply"), "host apply-back stays outside this section")
 assert.ok(!/datamachine|DataMachine/.test(rendered), "no host composer names leak into generic guidance")
 
 console.log("php-agents-md-section: OK")
