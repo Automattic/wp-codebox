@@ -81,14 +81,13 @@ for (const heading of ["**Default routing**", "**Safety**", "**Discovery**"]) {
   assert.ok(rendered.includes(heading), `contains ${heading}`)
 }
 for (const verb of [
-  "codebox run-agent-task",
-  "codebox run-agent-task-fanout",
   "codebox run-wordpress-workload",
+  "codebox run-runtime-task",
+  "codebox run-fuzz-suite",
   "codebox resolve-runtime-requirements",
   "codebox artifacts inspect",
   "codebox artifacts preflight-apply",
   "codebox artifacts apply",
-  "codebox browser-session create",
   "codebox --help",
 ]) {
   assert.ok(rendered.includes(verb), `routes to ${verb}`)
@@ -98,6 +97,7 @@ assert.ok(
   "uses the host-filtered WP-CLI prefix"
 )
 assert.ok(!rendered.includes(result.default_cmd + " codebox"), "filtered prefix replaces the default")
+assert.ok(!rendered.includes("run-agent-task"), "nested agent-task CLI stays outside this section")
 assert.ok(!/datamachine|DataMachine/.test(rendered), "no host composer names leak into generic guidance")
 
 console.log("php-agents-md-section: OK")
