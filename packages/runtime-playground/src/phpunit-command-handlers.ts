@@ -180,6 +180,8 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
     if (!empty($config_dirs)) {
         $directories = $config_dirs;
         ${options.logFunction}('${options.loadedConfigMessage}' . $xml_path);
+    } elseif (!empty($files)) {
+        $directories = array();
     }
     if (!empty($config_suffixes)) {
         ${suffixAssignment}
