@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join, posix, resolve } from "node:path"
 import { booleanCommandArg, phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type MountSpec, type Runtime, type RuntimeCreateSpec, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
 import { requiresManagedMultisitePreinstall } from "@automattic/wp-codebox-playground"
-import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareExtraPlugins, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
+import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareExtraPlugins, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeExtraThemes, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedExtraTheme, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex } from "../recipe-dry-run.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
@@ -17,6 +17,7 @@ export { assertResolvedInputMountPathArgs, recipeInputMountPathMap, rewriteInput
 export interface PreparedRecipeRuntimeSetup {
   workspaceMounts: PreparedWorkspaceMount[]
   extraPlugins: PreparedExtraPlugin[]
+  extraThemes?: PreparedExtraTheme[]
   dependencyOverlays: PreparedDependencyOverlay[]
   stagedFiles: PreparedStagedFile[]
   overlays: PreparedRuntimeOverlay[]
@@ -75,6 +76,7 @@ export async function applyPhasedRecipePlugins(args: {
 
 export async function prepareRecipeRuntimeSetup(recipe: WorkspaceRecipe, recipeDirectory: string, runtimeBackend: string): Promise<PreparedRecipeRuntimeSetup> {
   const extraPlugins = await prepareRecipeExtraPlugins(recipe, recipeDirectory)
+  const extraThemes = await prepareRecipeExtraThemes(recipe, recipeDirectory)
   const workspaceMounts = [
     ...await prepareRecipeWorkspaces(recipe, recipeDirectory),
     ...await prepareRecipeWorkspacePreloads(recipe),
@@ -82,6 +84,7 @@ export async function prepareRecipeRuntimeSetup(recipe: WorkspaceRecipe, recipeD
   return {
     workspaceMounts,
     extraPlugins,
+    extraThemes,
     dependencyOverlays: await prepareRecipeDependencyOverlays(recipe, recipeDirectory, extraPlugins),
     stagedFiles: await prepareRecipeStagedFiles(recipe, recipeDirectory),
     overlays: await prepareRecipeRuntimeOverlaysForRun(recipe, recipeDirectory),
@@ -101,7 +104,7 @@ export async function applyRecipeRuntimeSetup(args: {
   interruption?: RecipeInterruptionController
 }): Promise<RecipeRuntimeSetupResult> {
   const { recipe, recipeDirectory, runtime, runtimeSpec, prepared, phaseExecutor, interruption } = args
-  const { workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, inputMountBaselinePaths, inputMountPathMap } = prepared
+  const { workspaceMounts, extraPlugins, extraThemes = [], dependencyOverlays, stagedFiles, overlays, inputMountBaselinePaths, inputMountPathMap } = prepared
   const executions: RecipeExecutionResult[] = []
   const phaseTracker = phaseExecutor.tracker
   const awaitRecipe = <T>(operation: string, promiseOrFactory: Promise<T> | (() => Promise<T>), timeoutMs?: number): Promise<T> => phaseExecutor.operation(operation, promiseOrFactory, timeoutMs)
@@ -176,6 +179,9 @@ export async function applyRecipeRuntimeSetup(args: {
   const extraPluginMounts = preparedExtraPluginMounts(extraPlugins)
   await mountPreparedExtraPlugins(runtime, extraPlugins, extraPluginMounts, phaseExecutor, interruption, "mount_plugins")
 
+  const extraThemeMounts = preparedExtraThemeMounts(extraThemes)
+  await mountPreparedExtraThemes(runtime, extraThemes, extraThemeMounts, phaseExecutor, interruption, "mount_themes")
+
   await phaseTracker.run("materialize_runtime_inputs", phaseRuntimeInputData(recipe, extraPlugins, stagedFiles, dependencyOverlays), async () => {
     for (const overlay of overlayCopies) {
       executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(copyRuntimeOverlayCode(overlay.source, overlay.target)) }), "setup", -3, `runtime.overlay.copy:${overlay.target}`))
@@ -225,6 +231,7 @@ export async function applyRecipeRuntimeSetup(args: {
 
     const materializableMounts: MountSpec[] = [
       ...extraPluginMounts,
+      ...extraThemeMounts,
       ...inputMounts,
       ...stagedFiles.map((stagedFile) => ({
         type: stagedFile.type,
@@ -257,6 +264,16 @@ export async function applyRecipeRuntimeSetup(args: {
     loaderStepIndex: -2,
     activationStepIndex: -1,
     activationPhase: "activate_plugins",
+  }))
+
+  executions.push(...await installPreparedExtraThemeRuntime({
+    runtime,
+    themes: extraThemes,
+    phaseExecutor,
+    interruption,
+    recipePhase: "setup",
+    activationStepIndex: -1,
+    activationPhase: "activate_theme",
   }))
 
   for (const [index, setupStep] of (recipe.inputs?.pluginRuntime?.setup ?? []).entries()) {
@@ -480,6 +497,36 @@ async function mountPreparedExtraPlugins(runtime: Runtime, plugins: PreparedExtr
   })
 }
 
+function preparedExtraThemeMounts(themes: PreparedExtraTheme[]): MountSpec[] {
+  return themes.map((theme) => ({
+    type: "directory",
+    source: theme.source,
+    target: theme.target,
+    mode: "readonly",
+    metadata: {
+      kind: "extra-theme",
+      slug: theme.slug,
+      source: theme.provenance,
+    },
+  }))
+}
+
+async function mountPreparedExtraThemes(runtime: Runtime, themes: PreparedExtraTheme[], mounts: MountSpec[], phaseExecutor: RecipeRunPhaseExecutor, interruption: RecipeInterruptionController | undefined, phaseName: RecipePhaseName): Promise<void> {
+  await phaseExecutor.tracker.run(phaseName, phaseThemeMountData(themes), async () => {
+    for (const [index, theme] of themes.entries()) {
+      await phaseExecutor.operation(`extra-theme.mount:${theme.slug}`, runtime.mount(mounts[index]))
+      interruption?.throwIfInterrupted()
+    }
+  })
+}
+
+function phaseThemeMountData(themes: PreparedExtraTheme[]): Record<string, unknown> {
+  return {
+    count: themes.length,
+    themes: themes.map((theme) => ({ slug: theme.slug, target: theme.target, activate: theme.activate })),
+  }
+}
+
 function canMaterializeMounts(runtime: Runtime): boolean {
   return typeof runtime.materializeStagedInputs === "function" || typeof runtime.materializeMounts === "function"
 }
@@ -530,6 +577,40 @@ function phasePluginMountData(extraPlugins: PreparedExtraPlugin[]): Record<strin
     count: extraPlugins.length,
     plugins: extraPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, target: plugin.target, loadAs: plugin.loadAs })),
   }
+}
+
+/**
+ * Themes have no mu-plugin loader, no Composer autoload, and no phased/
+ * artifact-based install path -- those are plugin-specific component-
+ * contract concerns (component-contracts.ts resolvePluginEntrypointContract)
+ * that do not apply to a theme's style.css contract. At most one extra_themes
+ * entry may declare activate:true (enforced in prepareExtraThemes), so this
+ * mounts every prepared theme and activates that single theme via
+ * switch_theme, not activate_plugin.
+ */
+async function installPreparedExtraThemeRuntime(args: {
+  runtime: Runtime
+  themes: PreparedExtraTheme[]
+  phaseExecutor: RecipeRunPhaseExecutor
+  interruption?: RecipeInterruptionController
+  recipePhase: RecipeWorkflowPhase
+  activationStepIndex: number
+  activationPhase: RecipePhaseName
+}): Promise<RecipeExecutionResult[]> {
+  const { runtime, themes, phaseExecutor, interruption, recipePhase, activationStepIndex, activationPhase } = args
+  const executions: RecipeExecutionResult[] = []
+  const activeTheme = themes.find((theme) => theme.activate)
+  if (!activeTheme) return executions
+
+  await phaseExecutor.tracker.run(activationPhase, phaseThemeActivationData(activeTheme), async () => {
+    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(activateExtraThemeCode(activeTheme)) }), recipePhase, activationStepIndex, `extra-theme.activate:${activeTheme.slug}`))
+    interruption?.throwIfInterrupted()
+  })
+  return executions
+}
+
+function phaseThemeActivationData(theme: PreparedExtraTheme): Record<string, unknown> {
+  return { slug: theme.slug, target: theme.target, themeName: theme.themeName }
 }
 
 function phaseRuntimeInputData(recipe: WorkspaceRecipe, extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], dependencyOverlays: PreparedDependencyOverlay[]): Record<string, unknown> {
@@ -693,4 +774,22 @@ if (is_wp_error($result)) {
 }
 do_action('wp_codebox_runtime_plugin_activated', $plugin_file);
 echo wp_json_encode(array('activated' => $plugin_file));`
+}
+
+function activateExtraThemeCode(theme: PreparedExtraTheme): string {
+  const stylesheet = theme.slug
+  return `$stylesheet = ${JSON.stringify(stylesheet)};
+$theme = wp_get_theme($stylesheet);
+if (!$theme->exists()) {
+    throw new RuntimeException('Recipe extra theme is not available for activation: ' . $stylesheet);
+}
+if ($theme->errors()) {
+    throw new RuntimeException('Recipe extra theme has errors: ' . $stylesheet . ': ' . $theme->errors()->get_error_message());
+}
+switch_theme($stylesheet);
+if (get_stylesheet() !== $stylesheet) {
+    throw new RuntimeException('Failed to activate extra theme: ' . $stylesheet);
+}
+do_action('wp_codebox_runtime_theme_activated', $stylesheet);
+echo wp_json_encode(array('activated' => $stylesheet));`
 }

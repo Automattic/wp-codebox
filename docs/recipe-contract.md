@@ -97,6 +97,7 @@ top-level fields:
 - `workspaces`
 - `workspace_preloads`
 - `extra_plugins`
+- `extra_themes`
 - `component_manifest`
 - `dependency_overlays`
 - `runtimeEnv`
@@ -297,6 +298,46 @@ Supported `loadAs` values:
 
 External HTTPS zip downloads are gated by `WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS=1`.
 Local paths are resolved relative to the recipe file.
+
+## Extra Themes
+
+`inputs.extra_themes` mounts additional WordPress themes before workflow steps
+run, resolved through the same local/local-zip/HTTPS-zip source layer and
+`sha256` pinning as `inputs.extra_plugins`. Each entry requires `source` or
+`sourcePath` and may include `sourceSubdir`, `mountSlug`, `activate`, and
+`sha256`. Themes have no plugin-style entrypoint; the contract is `style.css`
+carrying a non-empty `Theme Name` header, an optional `Template` header naming
+a parent theme slug, and one of `index.php`, `templates/index.html`, or
+`block-templates/index.html`. A remote source cannot be inspected before it is
+downloaded, so this contract is checked after materialization, not at recipe
+validation time.
+
+```json
+{
+  "inputs": {
+    "extra_themes": [
+      {
+        "source": "https://github.com/example/theme/releases/download/v1.0.0/theme.zip",
+        "slug": "example-theme",
+        "sha256": "…",
+        "activate": true
+      },
+      {
+        "source": "../child-theme",
+        "slug": "example-theme-child"
+      }
+    ]
+  }
+}
+```
+
+Each theme mounts below `/wordpress/wp-content/themes/<slug>`. At most one
+entry may set `activate: true`; that theme is activated with `switch_theme`,
+not `activate_plugin`. A child theme's `Template` header must name another
+`extra_themes` entry's slug, and that parent must itself be a standalone theme
+(no `Template` header of its own). External HTTPS zip downloads are gated by
+`WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS=1`. Local paths are resolved relative to
+the recipe file.
 
 ## Source Packages
 

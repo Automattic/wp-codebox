@@ -87,3 +87,61 @@ function isFile(filePath: string): boolean {
 function stringValue(value: unknown): string {
   return value === undefined || value === null ? "" : String(value).trim()
 }
+
+export type ThemeEntrypointFile = "index.php" | "templates/index.html" | "block-templates/index.html"
+
+export interface ThemeEntrypointContract {
+  source: string
+  slug?: string
+}
+
+export interface ResolvedThemeEntrypointContract {
+  source: string
+  slug: string
+  themeName: string
+  template?: string
+  entrypoint: ThemeEntrypointFile
+}
+
+const THEME_ENTRYPOINT_CANDIDATES: readonly ThemeEntrypointFile[] = ["index.php", "templates/index.html", "block-templates/index.html"]
+
+/**
+ * Resolves a theme's contract from an already-materialized local directory.
+ *
+ * Themes have no plugin-style entrypoint header; their contract is style.css
+ * carrying a Theme Name header, an optional Template header naming a parent
+ * theme slug, and a block/classic template entrypoint. This must only be
+ * called after a source is materialized on disk -- a remote URL cannot be
+ * inspected before download, so callers resolve this after extraction, not
+ * at recipe-build time.
+ */
+export function resolveThemeEntrypointContract(contract: ThemeEntrypointContract): ResolvedThemeEntrypointContract {
+  const source = stringValue(contract.source)
+  const slug = sanitizePluginSlug(stringValue(contract.slug) || basename(resolve(source || ".")))
+
+  const styleSheetPath = join(source, "style.css")
+  let styleSheet: string
+  try {
+    styleSheet = readFileSync(styleSheetPath, "utf8")
+  } catch {
+    throw new Error(`Theme is missing style.css: ${slug}`)
+  }
+
+  const themeName = themeHeaderValue(styleSheet, "Theme Name")
+  if (!themeName) {
+    throw new Error(`Theme style.css must declare a non-empty Theme Name header: ${slug}`)
+  }
+
+  const template = themeHeaderValue(styleSheet, "Template") || undefined
+  const entrypoint = THEME_ENTRYPOINT_CANDIDATES.find((candidate) => isFile(join(source, candidate)))
+  if (!entrypoint) {
+    throw new Error(`Theme is missing an entrypoint (${THEME_ENTRYPOINT_CANDIDATES.join(", ")}): ${slug}`)
+  }
+
+  return { source, slug, themeName, template, entrypoint }
+}
+
+function themeHeaderValue(styleSheet: string, header: string): string {
+  const match = styleSheet.slice(0, 8192).match(new RegExp(`^[ \\t/*#@]*${header}:[ \\t]*(.*)$`, "mi"))
+  return match ? match[1].trim() : ""
+}

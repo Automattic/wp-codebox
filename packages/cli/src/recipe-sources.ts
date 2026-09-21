@@ -4,8 +4,8 @@ import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { compileSourcePackage, composerManagedHostCommandConfig, composerManagedHostEnv, normalizeReviewerSafePath, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
-import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace, WorkspaceRecipeWorkspacePreload, WorkspaceRecipeWorkspacePreloadRepository } from "@automattic/wp-codebox-core"
-import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
+import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeExtraTheme, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace, WorkspaceRecipeWorkspacePreload, WorkspaceRecipeWorkspacePreloadRepository } from "@automattic/wp-codebox-core"
+import { executeManagedHostCommand, resolvePluginEntrypointContract, resolveThemeEntrypointContract } from "@automattic/wp-codebox-core"
 import { collectPreparedSourceCleanupPaths, DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
 import { registerRuntimeOverlayDescriptor, runtimeOverlayDescriptor } from "./runtime-overlay-registry.js"
 import { evaluateSourcePolicy, evaluateZipSourcePolicy, sourcePolicySnapshot, type SourcePolicyIssue } from "./source-policy.js"
@@ -76,6 +76,18 @@ export interface PreparedExtraPlugin {
 }
 
 type BootActivePluginCandidate = Pick<PreparedExtraPlugin, "pluginFile" | "activate" | "loadAs">
+
+export interface PreparedExtraTheme {
+  source: string
+  slug: string
+  target: string
+  activate: boolean
+  themeName: string
+  template?: string
+  cleanupPaths: string[]
+  provenance: RecipeSourceProvenance
+  metadata?: Record<string, unknown>
+}
 
 export type RecipeStagedFileProvenance = PreparedSourceProvenance
 
@@ -273,8 +285,8 @@ async function cleanupRecipeWorkspaces(workspaces: PreparedWorkspaceMount[]): Pr
   await Promise.all(workspaces.flatMap((workspace) => workspace.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
 }
 
-export async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[] = [], overlays: PreparedRuntimeOverlay[] = [], dependencyOverlays: PreparedDependencyOverlay[] = []): Promise<void> {
-  const cleanupPaths = collectPreparedSourceCleanupPaths(extraPlugins, stagedFiles, overlays, dependencyOverlays)
+export async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[] = [], overlays: PreparedRuntimeOverlay[] = [], dependencyOverlays: PreparedDependencyOverlay[] = [], extraThemes: PreparedExtraTheme[] = []): Promise<void> {
+  const cleanupPaths = collectPreparedSourceCleanupPaths(extraPlugins, stagedFiles, overlays, dependencyOverlays, extraThemes)
   await Promise.all([cleanupRecipeWorkspaces(workspaces), ...cleanupPaths.map((path) => rm(path, { recursive: true, force: true }))])
 }
 
@@ -314,6 +326,79 @@ export async function prepareExtraPlugins(plugins: readonly WorkspaceRecipeExtra
     return preparedPlugins
   } catch (error) {
     await Promise.all(preparedPlugins.flatMap((plugin) => plugin.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
+    throw error
+  }
+}
+
+export async function prepareRecipeExtraThemes(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedExtraTheme[]> {
+  return prepareExtraThemes(recipeExtraThemes(recipe), recipeDirectory)
+}
+
+/**
+ * Materializes recipe extra_themes through the same local/https_zip/sha256
+ * source-resolution layer as prepareExtraPlugins (prepareRecipeSource below),
+ * then resolves each theme's style.css contract after materialization -- a
+ * remote source cannot be inspected before it is downloaded. Cross-theme
+ * checks (child theme Template parents, at-most-one-active) run once every
+ * theme in the batch has been materialized and contract-resolved.
+ */
+export async function prepareExtraThemes(themes: readonly WorkspaceRecipeExtraTheme[], recipeDirectory: string): Promise<PreparedExtraTheme[]> {
+  interface ResolvedExtraTheme {
+    theme: WorkspaceRecipeExtraTheme
+    slug: string
+    resolved: PreparedExternalSource
+    themeName: string
+    template?: string
+  }
+
+  const resolvedThemes: ResolvedExtraTheme[] = []
+  try {
+    if (themes.filter((theme) => theme.activate === true).length > 1) {
+      throw new Error("Recipe extra_themes permits at most one active theme")
+    }
+
+    const seenSlugs = new Set<string>()
+    for (const theme of themes) {
+      const slug = recipeExtraThemeSlug(theme)
+      if (seenSlugs.has(slug)) {
+        throw new Error(`Recipe extra_themes slugs must be unique: ${slug}`)
+      }
+      seenSlugs.add(slug)
+
+      const sourceRef = recipeExtraThemeSource(theme)
+      const sourceRootRef = recipeExtraThemeSourceRoot(theme, recipeDirectory)
+      const sourceSubpath = recipeExtraThemeSourceSubpath(theme, recipeDirectory)
+      const resolved = await prepareRecipeSource(sourceRootRef, recipeDirectory, slug, theme.sha256)
+      const themeResolved = sourceSubpath ? { ...resolved, source: join(resolved.source, sourceSubpath) } : resolved
+      const contract = resolveThemeEntrypointContract({ source: themeResolved.source, slug })
+      resolvedThemes.push({ theme, slug, resolved: themeResolved, themeName: contract.themeName, template: contract.template })
+    }
+
+    const bySlug = new Map(resolvedThemes.map((entry) => [entry.slug, entry]))
+    for (const entry of resolvedThemes) {
+      if (!entry.template) continue
+      const parent = bySlug.get(entry.template)
+      if (!parent) {
+        throw new Error(`Recipe extra_themes child theme "${entry.slug}" Template parent must also be listed in inputs.extra_themes: ${entry.template}`)
+      }
+      if (parent.template) {
+        throw new Error(`Recipe extra_themes child theme "${entry.slug}" Template parent must be a standalone theme, not itself a child theme: ${entry.template}`)
+      }
+    }
+
+    return resolvedThemes.map(({ theme, slug, resolved, themeName, template }) => ({
+      source: resolved.source,
+      slug,
+      target: themeTarget(slug),
+      activate: theme.activate === true,
+      themeName,
+      template,
+      cleanupPaths: resolved.cleanupPaths,
+      provenance: resolved.provenance,
+      metadata: theme.metadata,
+    }))
+  } catch (error) {
+    await Promise.all(resolvedThemes.flatMap((entry) => entry.resolved.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
     throw error
   }
 }
@@ -1797,6 +1882,10 @@ export function recipeExtraPlugins(recipe: WorkspaceRecipe): WorkspaceRecipeExtr
   return recipe.inputs?.extra_plugins ?? []
 }
 
+export function recipeExtraThemes(recipe: WorkspaceRecipe): WorkspaceRecipeExtraTheme[] {
+  return recipe.inputs?.extra_themes ?? []
+}
+
 export function recipeSource(sourceRef: string, expectedSha256?: string): ParsedRecipeSource {
   if (sourceRef === BUNDLED_MDI_NATIVE_SOURCE) {
     return { type: "local", resolvedUrl: BUNDLED_MDI_NATIVE_ARCHIVE, host: "", ...(expectedSha256 ? { expectedSha256: expectedSha256.toLowerCase() } : {}) }
@@ -1873,59 +1962,78 @@ export function recipeSourceProvenance(source: ParsedRecipeSource, recipeDirecto
   }
 }
 
-export function recipeExtraPluginSlug(plugin: WorkspaceRecipeExtraPlugin): string {
-  if (plugin.mountSlug) {
-    return plugin.mountSlug
+/**
+ * Shared shape backing recipe source resolution for every external-source
+ * recipe input (extra_plugins, extra_themes, ...). The slug/source-root/
+ * subpath resolution rules are identical across inputs; only the input name
+ * used in error messages and the input-specific fields (pluginFile/loadAs/
+ * composer for plugins, activate for themes) differ.
+ */
+interface RecipeExternalSourceRef {
+  source?: string
+  sourcePath?: string
+  sourceRoot?: string
+  sourceSubpath?: string
+  sourceSubdir?: string
+  originalSource?: string
+  slug?: string
+  mountSlug?: string
+  sha256?: string
+}
+
+function resolveExternalSourceRef(ref: RecipeExternalSourceRef, inputName: string): string {
+  if (ref.source !== undefined) {
+    return ref.source
+  }
+  if (ref.sourcePath !== undefined) {
+    return ref.sourcePath
+  }
+  throw new Error(`Recipe ${inputName} entries must include source or sourcePath`)
+}
+
+function resolveExternalSourceSlug(ref: RecipeExternalSourceRef, inputName: string): string {
+  if (ref.mountSlug) {
+    return ref.mountSlug
   }
 
-  if (plugin.slug) {
-    return plugin.slug
+  if (ref.slug) {
+    return ref.slug
   }
 
-  const sourceRef = recipeExtraPluginSource(plugin)
-  const source = recipeSource(sourceRef, plugin.sha256)
+  const sourceRef = resolveExternalSourceRef(ref, inputName)
+  const source = recipeSource(sourceRef, ref.sha256)
   if (source.wporgSlug) {
     return source.wporgSlug
   }
 
   if (source.type !== "local") {
-    throw new Error(`External extra_plugins sources require mountSlug or slug when it cannot be inferred from a WordPress.org plugin URL: ${sourceRef}`)
+    throw new Error(`External ${inputName} sources require mountSlug or slug when it cannot be inferred from a WordPress.org plugin URL: ${sourceRef}`)
   }
 
   return basename(resolve(sourceRef))
 }
 
-export function recipeExtraPluginSource(plugin: WorkspaceRecipeExtraPlugin): string {
-  if (plugin.source !== undefined) {
-    return plugin.source
+function resolveExternalSourceRoot(ref: RecipeExternalSourceRef, inputName: string, recipeDirectory = "."): string {
+  if (ref.sourcePath) {
+    return ref.sourcePath
   }
-  if (plugin.sourcePath !== undefined) {
-    return plugin.sourcePath
+
+  if (ref.sourceRoot && externalSourceRootContainsSource(ref, inputName, ref.sourceRoot, recipeDirectory)) {
+    return ref.sourceRoot
   }
-  throw new Error("Recipe extra_plugins entries must include source or sourcePath")
+
+  return ref.originalSource ?? resolveExternalSourceRef(ref, inputName)
 }
 
-export function recipeExtraPluginSourceRoot(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory = "."): string {
-  if (plugin.sourcePath) {
-    return plugin.sourcePath
+function resolveExternalSourceSubpath(ref: RecipeExternalSourceRef, inputName: string, recipeDirectory: string): string {
+  const explicitSubpath = ref.sourceSubdir ?? ref.sourceSubpath
+  const declaredSourceRoot = ref.sourcePath ?? ref.sourceRoot
+  if (explicitSubpath && declaredSourceRoot && externalSourceRootContainsSource(ref, inputName, declaredSourceRoot, recipeDirectory)) {
+    return normalizeExternalSourceSubpath(explicitSubpath, inputName)
   }
 
-  if (plugin.sourceRoot && recipeExtraPluginSourceRootContainsSource(plugin, plugin.sourceRoot, recipeDirectory)) {
-    return plugin.sourceRoot
-  }
-
-  return plugin.originalSource ?? recipeExtraPluginSource(plugin)
-}
-
-export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory: string): string {
-  const explicitSubpath = plugin.sourceSubdir ?? plugin.sourceSubpath
-  const declaredSourceRoot = plugin.sourcePath ?? plugin.sourceRoot
-  if (explicitSubpath && declaredSourceRoot && recipeExtraPluginSourceRootContainsSource(plugin, declaredSourceRoot, recipeDirectory)) {
-    return normalizeRecipeExtraPluginSourceSubpath(explicitSubpath)
-  }
-
-  const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
-  const sourceRef = recipeExtraPluginSource(plugin)
+  const sourceRoot = resolveExternalSourceRoot(ref, inputName, recipeDirectory)
+  const sourceRef = resolveExternalSourceRef(ref, inputName)
   if (sourceRoot === sourceRef) {
     return ""
   }
@@ -1938,26 +2046,66 @@ export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugi
   return normalizeReviewerSafePath(relativePath)
 }
 
-function recipeExtraPluginSourceRootContainsSource(plugin: WorkspaceRecipeExtraPlugin, sourceRoot: string, recipeDirectory: string): boolean {
-  const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, recipeExtraPluginSource(plugin)))
+function externalSourceRootContainsSource(ref: RecipeExternalSourceRef, inputName: string, sourceRoot: string, recipeDirectory: string): boolean {
+  const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, resolveExternalSourceRef(ref, inputName)))
   return !relativePath.startsWith("..") && !isAbsolute(relativePath)
 }
 
-export function normalizeRecipeExtraPluginSourceSubpath(value: string): string {
+function normalizeExternalSourceSubpath(value: string, inputName: string): string {
   const rootMarker = value.trim().replace(/\\/g, "/").replace(/\/+$/, "")
   if (rootMarker === ".") {
     return ""
   }
   const normalized = normalizeReviewerSafePath(value)
   if (!normalized || normalized === "." || normalized.startsWith("../") || normalized.includes("/../") || isAbsolute(normalized)) {
-    throw new Error(`Recipe extra_plugins sourceSubdir/sourceSubpath must be a safe relative directory: ${value}`)
+    throw new Error(`Recipe ${inputName} sourceSubdir/sourceSubpath must be a safe relative directory: ${value}`)
   }
   return normalized
+}
+
+export function recipeExtraPluginSlug(plugin: WorkspaceRecipeExtraPlugin): string {
+  return resolveExternalSourceSlug(plugin, "extra_plugins")
+}
+
+export function recipeExtraPluginSource(plugin: WorkspaceRecipeExtraPlugin): string {
+  return resolveExternalSourceRef(plugin, "extra_plugins")
+}
+
+export function recipeExtraPluginSourceRoot(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory = "."): string {
+  return resolveExternalSourceRoot(plugin, "extra_plugins", recipeDirectory)
+}
+
+export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory: string): string {
+  return resolveExternalSourceSubpath(plugin, "extra_plugins", recipeDirectory)
+}
+
+export function normalizeRecipeExtraPluginSourceSubpath(value: string): string {
+  return normalizeExternalSourceSubpath(value, "extra_plugins")
 }
 
 export function recipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin): string {
   const slug = recipeExtraPluginSlug(plugin)
   return plugin.pluginFile ?? `${slug}/${slug}.php`
+}
+
+export function recipeExtraThemeSlug(theme: WorkspaceRecipeExtraTheme): string {
+  return resolveExternalSourceSlug(theme, "extra_themes")
+}
+
+export function recipeExtraThemeSource(theme: WorkspaceRecipeExtraTheme): string {
+  return resolveExternalSourceRef(theme, "extra_themes")
+}
+
+export function recipeExtraThemeSourceRoot(theme: WorkspaceRecipeExtraTheme, recipeDirectory = "."): string {
+  return resolveExternalSourceRoot(theme, "extra_themes", recipeDirectory)
+}
+
+export function recipeExtraThemeSourceSubpath(theme: WorkspaceRecipeExtraTheme, recipeDirectory: string): string {
+  return resolveExternalSourceSubpath(theme, "extra_themes", recipeDirectory)
+}
+
+export function themeTarget(slug: string): string {
+  return `/wordpress/wp-content/themes/${slug}`
 }
 
 export function pluginTarget(slug: string, loadAs: PreparedExtraPlugin["loadAs"]): string {

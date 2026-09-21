@@ -200,6 +200,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { $ref: "#/$defs/extraPlugin" },
           },
+          extra_themes: {
+            type: "array",
+            description: "Themes materialized from a local directory, local zip, or generic HTTPS zip URL and mounted into wp-content/themes, sharing the extra_plugins source-resolution and sha256 pinning layer.",
+            items: { $ref: "#/$defs/extraTheme" },
+          },
           component_manifest: { $ref: "#/$defs/componentManifest" },
           dependency_overlays: {
             type: "array",
@@ -850,6 +855,30 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             enum: ["install"],
             description: "Explicitly run Composer install in a staged copy of a local plugin when vendor/autoload.php is missing.",
           },
+          sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      extraTheme: {
+        type: "object",
+        additionalProperties: false,
+        anyOf: [{ required: ["source"] }, { required: ["sourcePath"] }],
+        properties: {
+          source: {
+            type: "string",
+            description: "Local theme directory path, local theme zip path, or generic HTTPS zip URL.",
+          },
+          sourcePath: {
+            type: "string",
+            description: "Local source root path. Use sourceSubdir when the theme lives below this root in a monorepo.",
+          },
+          sourceRoot: { type: "string" },
+          sourceSubpath: { type: "string" },
+          sourceSubdir: { type: "string" },
+          originalSource: { type: "string" },
+          slug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+          mountSlug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+          activate: { type: "boolean" },
           sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
           metadata: { $ref: "#/$defs/metadata" },
         },

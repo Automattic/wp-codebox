@@ -13,7 +13,7 @@ import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, c
 import { recipeExternalServiceBoundarySummaries } from "../recipe-external-services.js"
 import { mergeRecipeSecretEnvSummary, resolveRecipeSecretEnv } from "../recipe-secret-env.js"
 import type { PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
-import { cleanupRecipePreparedSources, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
+import { cleanupRecipePreparedSources, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedExtraTheme, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { loadWorkspaceRecipe, recipePolicy, recipeWorkflowSteps, validateRecipeRuntimePolicy, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { resolveCliRuntimeBackend } from "../runtime-backends.js"
 import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
@@ -206,6 +206,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
   let effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
   let workspaceMounts: PreparedWorkspaceMount[] = []
   let extraPlugins: PreparedExtraPlugin[] = []
+  let extraThemes: PreparedExtraTheme[] = []
   let dependencyOverlays: PreparedDependencyOverlay[] = []
   let stagedFiles: PreparedStagedFile[] = []
   let overlays: PreparedRuntimeOverlay[] = []
@@ -250,7 +251,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
 
   try {
     const preparedRuntimeSetup = await prepareRecipeRuntimeSetup(recipe, recipeDirectory, plan.runtime.backend)
-    ;({ workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, inputMountBaselinePaths, inputMountPathMap, backendPackage } = preparedRuntimeSetup)
+    ;({ workspaceMounts, extraPlugins, extraThemes = [], dependencyOverlays, stagedFiles, overlays, inputMountBaselinePaths, inputMountPathMap, backendPackage } = preparedRuntimeSetup)
     interruption?.throwIfInterrupted()
 
     runRecord = await runRegistry.update(runRecord.runId, { status: "booting" })
@@ -505,7 +506,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         }
       })
       await releaseManagedServices()
-      await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
+      await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays, extraThemes)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
     runRecord = await runRegistry.read(runRecord.runId)
@@ -646,7 +647,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
 
     cleanupEvidence = await runManagedServiceCleanup(runRegistry, runRecord, serviceEvidence, true, async () => {
       await releaseManagedServices()
-      await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
+      await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays, extraThemes)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
     runRecord = await runRegistry.read(runRecord.runId)
