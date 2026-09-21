@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs"
 import { lstat, readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { BROWSER_PROBE_CHROMIUM_PROFILE_IDS, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, RUNTIME_PHP_WASM_BUNDLED_EXTENSIONS, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, browserEnvironment, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { BROWSER_PROBE_CHROMIUM_PROFILE_IDS, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, RUNTIME_PHP_WASM_BUNDLED_EXTENSIONS, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, browserEnvironment, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, resolveThemeEntrypointContract, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
-import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
+import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeExtraThemeSlug, recipeExtraThemeSource, recipeExtraThemeSourceRoot, recipeExtraThemeSourceSubpath, recipeExtraThemes, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { assertHostNodeHeapRequirement } from "./host-node-heap.js"
 import { isSmtpSinkRecipeOperation } from "./smtp-sink-recipe-operations.js"
@@ -220,6 +220,38 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
     if (plugin.metadata !== undefined && (!plugin.metadata || typeof plugin.metadata !== "object" || Array.isArray(plugin.metadata))) {
       throw new Error(`Recipe extra_plugins metadata must be an object when provided: ${recipePath}`)
     }
+  }
+
+  const rawExtraThemes = recipe.inputs?.extra_themes
+  if (rawExtraThemes && !Array.isArray(rawExtraThemes)) {
+    throw new Error(`Recipe extra_themes must be an array: ${recipePath}`)
+  }
+
+  let activeThemeCount = 0
+  for (const theme of recipeExtraThemes(recipe)) {
+    if (!theme.source && !theme.sourcePath) {
+      throw new Error(`Recipe extra_themes entries must include source or sourcePath: ${recipePath}`)
+    }
+
+    if (theme.slug && !/^[a-z0-9][a-z0-9-_]*$/i.test(theme.slug)) {
+      throw new Error(`Recipe extra_themes slug must be a theme-directory slug: ${recipePath}`)
+    }
+
+    if (theme.mountSlug && !/^[a-z0-9][a-z0-9-_]*$/i.test(theme.mountSlug)) {
+      throw new Error(`Recipe extra_themes mountSlug must be a theme-directory slug: ${recipePath}`)
+    }
+
+    if (theme.metadata !== undefined && (!theme.metadata || typeof theme.metadata !== "object" || Array.isArray(theme.metadata))) {
+      throw new Error(`Recipe extra_themes metadata must be an object when provided: ${recipePath}`)
+    }
+
+    if (theme.activate === true) {
+      activeThemeCount += 1
+    }
+  }
+
+  if (activeThemeCount > 1) {
+    throw new Error(`Recipe extra_themes permits at most one active theme: ${recipePath}`)
   }
 
   const pluginRuntime = recipe.inputs?.pluginRuntime
@@ -717,6 +749,74 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     }
   }
 
+  for (const [index, theme] of recipeExtraThemes(recipe).entries()) {
+    const path = `$.inputs.extra_themes[${index}]`
+    let sourceRef: string
+    try {
+      sourceRef = recipeExtraThemeSource(theme)
+    } catch (error) {
+      addIssue("missing-source", `${path}.source`, error instanceof Error ? error.message : String(error))
+      continue
+    }
+    let source: ReturnType<typeof recipeSource>
+    try {
+      source = recipeSource(sourceRef, theme.sha256)
+    } catch (error) {
+      addIssue("invalid-source", `${path}.source`, error instanceof Error ? error.message : String(error))
+      continue
+    }
+    const sourceRoot = recipeExtraThemeSourceRoot(theme, recipeDirectory)
+    let sourceSubpath = ""
+    try {
+      sourceSubpath = recipeExtraThemeSourceSubpath(theme, recipeDirectory)
+    } catch (error) {
+      addIssue("invalid-source-subdir", `${path}.${theme.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, error instanceof Error ? error.message : String(error))
+      continue
+    }
+    const localZipSource = source.type === "local" && sourceRef.toLowerCase().endsWith(".zip")
+    const themeSource = source.type === "local" ? resolve(recipeDirectory, sourceRef) : undefined
+    const sourceRootPath = resolve(recipeDirectory, sourceRoot)
+    const themeMountedSource = source.type === "local" ? resolve(sourceRootPath, sourceSubpath) : undefined
+    let slug: string
+    try {
+      slug = recipeExtraThemeSlug(theme)
+    } catch (error) {
+      addIssue("invalid-slug", `${path}.slug`, error instanceof Error ? error.message : String(error))
+      continue
+    }
+
+    validateRecipeSource(source, `${path}.source`, addIssue, theme.sha256, localZipSource)
+    if (themeSource) {
+      if (localZipSource) {
+        await validateExistingRegularFile(themeSource, `${path}.source`, addIssue)
+      } else {
+        await validateExistingDirectory(themeSource, `${path}.source`, addIssue)
+      }
+    }
+    if (sourceRoot !== sourceRef && !localZipSource) {
+      await validateExistingDirectory(resolve(recipeDirectory, sourceRoot), `${path}.sourceRoot`, addIssue)
+    }
+    if (themeMountedSource && !themeMountedSource.startsWith(`${sourceRootPath}/`) && themeMountedSource !== sourceRootPath) {
+      addIssue("invalid-source-subdir", `${path}.${theme.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, "Theme source subdirectory must stay inside the source root.")
+      continue
+    }
+    if (sourceSubpath && themeMountedSource && !localZipSource) {
+      await validateExistingDirectory(themeMountedSource, `${path}.${theme.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, addIssue)
+    }
+
+    // The style.css contract can only be inspected once a source is
+    // materialized on disk. An already-local, non-zip directory is
+    // immediately inspectable; local zips and remote https sources defer
+    // this check to prepareExtraThemes, which runs it after materialization.
+    if (themeMountedSource && !localZipSource) {
+      try {
+        resolveThemeEntrypointContract({ source: themeMountedSource, slug })
+      } catch (error) {
+        addIssue("invalid-theme-contract", `${path}.source`, error instanceof Error ? error.message : String(error))
+      }
+    }
+  }
+
   const extraPluginSlugs = new Set(recipeExtraPlugins(recipe).map((plugin) => recipeExtraPluginSlug(plugin)))
   for (const [index, overlay] of (recipe.inputs?.dependency_overlays ?? []).entries()) {
     const path = `$.inputs.dependency_overlays[${index}]`
@@ -1131,6 +1231,9 @@ export function recipePolicy(recipe: WorkspaceRecipe, recipeDirectory?: string):
     commands.unshift("wordpress.wp-cli")
   }
   if (recipeExtraPlugins(recipe).length > 0) {
+    commands.unshift("wordpress.run-php")
+  }
+  if (recipeExtraThemes(recipe).some((theme) => theme.activate === true)) {
     commands.unshift("wordpress.run-php")
   }
   if ((recipe.inputs?.siteSeeds ?? []).some((siteSeed) => siteSeed.type === "fixture")) {

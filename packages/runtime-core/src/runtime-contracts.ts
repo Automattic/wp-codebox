@@ -553,6 +553,20 @@ export interface WorkspaceRecipeExtraPlugin {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeExtraTheme {
+  source?: string
+  sourcePath?: string
+  sourceRoot?: string
+  sourceSubpath?: string
+  sourceSubdir?: string
+  originalSource?: string
+  slug?: string
+  mountSlug?: string
+  activate?: boolean
+  sha256?: string
+  metadata?: Record<string, unknown>
+}
+
 export interface ProjectedPluginPackageDescriptor {
   source?: string
   sha256?: string
@@ -735,6 +749,7 @@ export interface WorkspaceRecipe {
     workspace_preloads?: WorkspaceRecipeWorkspacePreload[]
     mounts?: WorkspaceRecipeMount[]
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
+    extra_themes?: WorkspaceRecipeExtraTheme[]
     component_manifest?: WorkspaceRecipeComponentManifest
     dependency_overlays?: WorkspaceRecipeDependencyOverlay[]
     runtimeEnv?: Record<string, string>
