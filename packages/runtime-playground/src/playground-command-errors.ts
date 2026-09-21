@@ -53,17 +53,20 @@ export class PlaygroundCommandCrashError extends Error {
 export class PhpWasmRuntimeRejectionError extends Error {
   readonly code = "wp-codebox-php-wasm-runtime-rejection"
   readonly failureClassification = "infrastructure-failure"
-  readonly runtime: { kind: "php-wasm"; signal: "unhandledRejection"; errorName: string; message: string }
+  readonly runtime: { kind: "php-wasm"; signal: "unhandledRejection"; errorName: string; message: string; trappedFunction?: string }
 
   constructor(cause: unknown) {
     const message = redactDiagnosticText(errorMessage(cause))
-    super(`PHP WASM runtime rejected while a command was active: ${message}`)
+    const trappedFunction = redactedTrappedPhpFunctionName(cause)
+    const summary = trappedFunction ? `${message} (trapped in ${trappedFunction}())` : message
+    super(`PHP WASM runtime rejected while a command was active: ${summary}`)
     this.name = "PhpWasmRuntimeRejectionError"
     this.runtime = {
       kind: "php-wasm",
       signal: "unhandledRejection",
       errorName: cause instanceof Error ? cause.name : "Error",
       message,
+      ...(trappedFunction ? { trappedFunction } : {}),
     }
   }
 }
@@ -98,6 +101,56 @@ function isPhpWasmRuntimeRejection(reason: unknown): boolean {
   }
 
   return typeof reason.stack === "string" && /(?:wasm:\/\/wasm\/)?php\.wasm[.:]/.test(reason.stack)
+}
+
+/**
+ * A php.wasm trap only ever reports a bare interpreter-level message such as
+ * "unreachable" — the PHP call that triggered it is discarded. PHP's Zend
+ * engine names every internal function's C implementation `zif_<name>` (the
+ * `zend_internal_function` naming convention shared by every extension,
+ * including mysqli), and that symbol survives into the WASM stack trace as a
+ * frame. Walking the stack top-down and taking the first `zif_*` frame finds
+ * the innermost PHP userland call that was executing when the trap fired —
+ * frames above it, like `zend_parse_method_parameters`, are Zend engine
+ * internals rather than the PHP function itself.
+ *
+ * This must never throw: constructing a diagnostic error is not allowed to
+ * fail the whole error path, so any unexpected shape degrades to `undefined`.
+ */
+function trappedPhpFunctionName(cause: unknown): string | undefined {
+  try {
+    if (!(cause instanceof Error)) {
+      return undefined
+    }
+
+    const stack = cause.stack
+    if (typeof stack !== "string") {
+      return undefined
+    }
+
+    for (const line of stack.split("\n")) {
+      const frame = /\bzif_([A-Za-z_][A-Za-z0-9_]*)/.exec(line)
+      if (frame) {
+        return frame[1]
+      }
+    }
+
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * `zif_*` symbols are PHP engine-internal function names drawn from a fixed,
+ * closed set of C identifiers (`[A-Za-z_][A-Za-z0-9_]*`, enforced by the
+ * extraction regex above) — they can never carry user data, secrets, tokens,
+ * or file paths. Redaction is applied anyway, defensively, so this path can
+ * never become the one place that silently bypasses it.
+ */
+function redactedTrappedPhpFunctionName(cause: unknown): string | undefined {
+  const name = trappedPhpFunctionName(cause)
+  return name ? redactDiagnosticText(name) : undefined
 }
 
 export class PlaygroundCliExitError extends Error {
