@@ -89,6 +89,7 @@ foreach ( array(
 	'class-wp-codebox-agent-process-runner.php',
 	'class-wp-codebox-agent-run-result-builder.php',
 	'class-wp-codebox-agent-outcome-classifier.php',
+	'class-wp-codebox-cli-resolver.php',
 	'class-wp-codebox-agent-sandbox-runner.php',
 ) as $file ) {
 	require_once $root . $file;

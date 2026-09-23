@@ -168,6 +168,7 @@
     "test:temp-runtime-cleanup": "tsx tests/temp-runtime-cleanup.test.ts",
     "smoke:cli-version": "tsx scripts/cli-version-smoke.ts",
     "test:php-runner-workspace-tools": "php scripts/php-runner-workspace-tools-smoke.php",
+    "test:php-cli-resolver": "tsx tests/php-cli-resolver.test.ts",
     "test:runtime-tool-policy": "tsx tests/runtime-tool-policy.test.ts",
     "test:browser-accessibility-oracles": "tsx --test tests/browser-accessibility-oracles.test.ts tests/browser-adaptive-exploration.test.ts tests/adversarial-browser.test.ts",
     "test:recipe-declared-artifacts": "tsx tests/recipe-declared-artifacts.test.ts",

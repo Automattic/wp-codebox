@@ -22,6 +22,7 @@ function apply_filters( string $hook_name, mixed $value, mixed ...$args ): mixed
 }
 
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-runtime-provider-registry.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-cli-resolver.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-browser-provider-auth-strategies.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-inheritance.php';
