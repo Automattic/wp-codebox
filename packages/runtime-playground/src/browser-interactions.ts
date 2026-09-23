@@ -34,6 +34,24 @@ interface BrowserPaintedReadinessTarget {
   urlFragment?: string
 }
 
+/**
+ * Compiles and runs `evaluate` step source. Tries an expression first so a
+ * complete value (e.g. an async IIFE whose body contains nested `return`
+ * statements) evaluates to itself, and falls back to a statement body only
+ * when the source cannot parse as an expression. Self-contained on purpose:
+ * passed to `page.evaluate`, which serializes it into the page.
+ */
+export function runBrowserEvaluateSource(source: string): Promise<unknown> {
+  try {
+    return new Function(`return (async () => (\n${source}\n))()`)()
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw error
+    }
+    return new Function(`return (async () => {\n${source}\n})()`)()
+  }
+}
+
 export async function executeBrowserInteractionStep(
   page: Page,
   step: BrowserInteractionStep,
@@ -106,14 +124,7 @@ export async function executeBrowserInteractionStep(
       return await browserStepWaitFor(page, step, timeout)
     }
     case "evaluate": {
-      const result = await page.evaluate(async (source) => {
-        // Support both a bare expression ("a.b.c") and a multi-statement body
-        // that returns explicitly. If the source already returns, run it as a
-        // body; otherwise evaluate it as an expression and return its value.
-        const body = /(^|[^.\w])return[\s(;]/.test(source) ? source : `return (\n${source}\n)`
-        const run = new Function(`return (async () => {\n${body}\n})()`)
-        return run()
-      }, String(step.expression ?? ""))
+      const result = await page.evaluate(runBrowserEvaluateSource, String(step.expression ?? ""))
       if (Object.prototype.hasOwnProperty.call(step, "assert")) {
         const passed = browserDeepEqual(result, step.assert)
         return {

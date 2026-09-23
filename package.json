@@ -125,6 +125,7 @@
     "smoke": "tsx scripts/run-smoke.ts",
     "test:redaction": "tsx tests/redaction.test.ts",
     "test:browser-preview-routing": "tsx --test tests/browser-preview-routing.test.ts",
+    "test:browser-evaluate-source": "tsx --test tests/browser-evaluate-source.test.ts",
     "test:browser-routed-command-security": "tsx --test tests/browser-routed-command-security.test.ts",
     "test:cloudflare-runtime": "npm --prefix packages/runtime-cloudflare run test",
     "test:cloudflare-queue": "npm --prefix packages/runtime-cloudflare run test:queue",
