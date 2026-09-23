@@ -198,9 +198,7 @@ final class WP_Codebox_Browser_Viewport_Replay {
 
 	/** @param string[] $args @return string[]|WP_Error */
 	private function command( array $args ): array|WP_Error {
-		$bundled = defined( 'WP_CODEBOX_PLUGIN_PATH' ) ? WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/bin/wp-codebox' : '';
-		$bin     = is_file( $bundled ) ? $bundled : 'wp-codebox';
-		$bin     = function_exists( 'apply_filters' ) ? (string) apply_filters( 'wp_codebox_bin', $bin ) : $bin;
+		$bin = WP_Codebox_Cli_Resolver::default_bin();
 		if ( preg_match( '/\.m?js$/', $bin ) ) {
 			$node = trim( (string) ( getenv( 'WP_CODEBOX_NODE_BIN' ) ?: 'node' ) );
 			return WP_Codebox_Managed_Host_Command::command( $node, array_merge( array( $bin ), $args ) );

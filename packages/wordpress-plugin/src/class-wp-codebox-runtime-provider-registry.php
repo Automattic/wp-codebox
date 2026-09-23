@@ -78,6 +78,7 @@ final class WP_Codebox_Runtime_Provider_Registry {
 		return array(
 			'schema'                   => 'wp-codebox/runtime-requirements-readiness/v1',
 			'provider'                 => $provider_available ? self::$providers[ $provider_id ]['metadata'] : ( '' !== $provider_id ? array( 'id' => $provider_id, 'available' => false ) : null ),
+			'cli'                      => WP_Codebox_Cli_Resolver::readiness(),
 			'model'                    => $model,
 			'plugins'                  => array_map( static fn( string $slug ): array => array( 'slug' => $slug, 'required' => true ), $components ),
 			'components'               => array_map( static fn( string $slug ): array => array( 'slug' => $slug, 'required' => true ), $components ),

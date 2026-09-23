@@ -43,6 +43,7 @@ final class WP_Ability {
 }
 
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-runtime-provider-registry.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-cli-resolver.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agents-api-adapter.php';
 
 function assert_no_agents_api_schema_leaks( mixed $value, string $path = '$' ): void {

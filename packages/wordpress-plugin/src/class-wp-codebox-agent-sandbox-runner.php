@@ -906,15 +906,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	private function default_bin(): string {
-		$bundled = defined( 'WP_CODEBOX_PLUGIN_PATH' ) ? WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/bin/wp-codebox' : '';
-		$default = is_string( $bundled ) && is_file( $bundled ) ? $bundled : 'wp-codebox';
-		$bin     = (string) $this->config_option( 'wp_codebox_bin', $default );
-
-		if ( function_exists( 'apply_filters' ) ) {
-			$bin = (string) apply_filters( 'wp_codebox_bin', $bin );
-		}
-
-		return $bin;
+		return WP_Codebox_Cli_Resolver::default_bin();
 	}
 
 	private function clean_path( string $path ): string {
@@ -1030,20 +1022,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	private function bundled_node_binary(): string {
-		if ( ! defined( 'WP_CODEBOX_PLUGIN_PATH' ) ) {
-			return '';
-		}
-
-		$path = WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/vendor/node/bin/node';
-		return is_file( $path ) && is_executable( $path ) ? $path : '';
+		return WP_Codebox_Cli_Resolver::bundled_node_binary();
 	}
 
 	private function is_bundled_cli_wrapper( string $bin ): bool {
-		if ( ! defined( 'WP_CODEBOX_PLUGIN_PATH' ) ) {
-			return false;
-		}
-
-		return $bin === WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/bin/wp-codebox';
+		return WP_Codebox_Cli_Resolver::is_bundled_cli( $bin );
 	}
 
 	private function resolve_command( string $command ): string {

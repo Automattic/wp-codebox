@@ -58,6 +58,7 @@ function remove_tree( string $path ): void {
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-json.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-path-policy.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-managed-host-command.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-cli-resolver.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-artifacts.php';
 
 $root = sys_get_temp_dir() . '/wp-codebox-artifact-import-smoke-' . bin2hex( random_bytes( 6 ) );
