@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@automattic/wp-codebox-core": "file:../runtime-core",
+    "@automattic/wp-codebox-native": "file:../runtime-native",
     "@automattic/wp-codebox-playground": "file:../runtime-playground"
   }
 }
