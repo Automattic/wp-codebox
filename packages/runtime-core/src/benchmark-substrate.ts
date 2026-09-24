@@ -57,8 +57,8 @@ export interface BenchmarkMatrixExpansion {
 }
 
 export interface BenchmarkMatrixCellDiagnostic {
-  type: "cell-failed"
-  severity: "error"
+  type: "cell-failed" | "cell-incomplete"
+  severity: "error" | "warning"
   cellId: string
   message: string
   code?: string
@@ -67,7 +67,7 @@ export interface BenchmarkMatrixCellDiagnostic {
 export interface BenchmarkMatrixCellResult {
   schema: "wp-codebox/benchmark-matrix-cell-result/v1"
   cell: BenchmarkMatrixCell
-  status: "succeeded" | "failed"
+  status: "succeeded" | "incomplete" | "failed"
   benchResults?: BenchmarkResultEnvelope
   benchResultsList?: BenchmarkResultEnvelope[]
   diagnostics: BenchmarkMatrixCellDiagnostic[]
@@ -181,23 +181,25 @@ export function expandBenchmarkMatrix(dimensions: readonly BenchmarkMatrixDimens
 }
 
 export function createBenchmarkMatrixCellResult(cell: BenchmarkMatrixCell, benchResults: BenchmarkResultEnvelope): BenchmarkMatrixCellResult {
-  return {
-    schema: "wp-codebox/benchmark-matrix-cell-result/v1",
-    cell,
-    status: "succeeded",
-    benchResults,
-    diagnostics: [],
-  }
+  const { benchResultsList: _benchResultsList, ...result } = createBenchmarkMatrixCellResults(cell, [benchResults])
+  return { ...result, benchResults }
 }
 
 export function createBenchmarkMatrixCellResults(cell: BenchmarkMatrixCell, benchResultsList: BenchmarkResultEnvelope[]): BenchmarkMatrixCellResult {
+  const incomplete = benchResultsList.some(benchmarkResultsIncomplete)
   return {
     schema: "wp-codebox/benchmark-matrix-cell-result/v1",
     cell,
-    status: "succeeded",
+    status: incomplete ? "incomplete" : "succeeded",
     ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
     benchResultsList,
-    diagnostics: [],
+    diagnostics: incomplete ? [{
+      type: "cell-incomplete",
+      severity: "warning",
+      cellId: cell.id,
+      message: `Benchmark matrix cell "${cell.id}" has skipped required scenarios.`,
+      code: "required-scenarios-skipped",
+    }] : [],
   }
 }
 
@@ -252,11 +254,16 @@ export async function executeBenchmarkMatrix(dimensions: readonly BenchmarkMatri
     matrix,
     cells,
     benchResults: cells
-      .filter((cell): cell is BenchmarkMatrixCellResult & { benchResultsList: BenchmarkResultEnvelope[] } => cell.status === "succeeded" && Array.isArray(cell.benchResultsList))
+      .filter((cell): cell is BenchmarkMatrixCellResult & { benchResultsList: BenchmarkResultEnvelope[] } => cell.status !== "failed" && Array.isArray(cell.benchResultsList))
       .map((cell) => ({ cellId: cell.cell.id, cell: cell.cell, results: cell.benchResultsList })),
     diagnostics: cells.flatMap((cell) => cell.diagnostics),
     provenance: matrixRunProvenance(options),
   }
+}
+
+function benchmarkResultsIncomplete(result: BenchmarkResultEnvelope): boolean {
+  const completeness = result.completeness
+  return typeof completeness === "object" && completeness !== null && (completeness as { status?: unknown }).status === "incomplete"
 }
 
 export function compareBenchmarkResults(baseline: BenchmarkResultEnvelope, candidate: BenchmarkResultEnvelope, options: CompareBenchmarkResultsOptions = {}): BenchmarkComparison {

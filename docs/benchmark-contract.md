@@ -227,6 +227,13 @@ Metrics are numeric and named by the workload/runtime surface. WP Codebox record
 them; it does not decide whether a value is good, bad, passing, failing, or
 regressed.
 
+Workloads can return `{ "status": "skipped", "reason": "..." }` or
+`{ "skipped": "..." }`. The scenario then records `status: "skipped"` and
+`skip_reason`, has zero executed iterations, and emits no metrics or timing
+samples. The envelope's `completeness.required` summary marks the benchmark
+`incomplete` when any required scenario is skipped. Benchmark matrices preserve
+that result as an incomplete cell instead of treating it as a successful timing.
+
 ## Running Benchmarks
 
 Use a recipe workflow step with `wordpress.bench`:
