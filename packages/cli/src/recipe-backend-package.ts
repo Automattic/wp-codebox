@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { normalizeRuntimeBackendKind, type RuntimeBackendFactoryContext, type RuntimeBackendKind, type WorkspaceRecipe, type WorkspaceRecipeRuntimeBackendPackage } from "@automattic/wp-codebox-core"
+import type { NativeRuntimeDriverFactory } from "@automattic/wp-codebox-native"
 
 export interface RuntimeBackendPackageProvenance {
   schema: "wp-codebox/runtime-backend-package/v1"
@@ -94,7 +95,25 @@ const playgroundRuntimeBackendPackageAdapter: RuntimeBackendPackageAdapter = {
   },
 }
 
-const runtimeBackendPackageAdapterRegistry = new RuntimeBackendPackageAdapterRegistry([playgroundRuntimeBackendPackageAdapter])
+const nativeRuntimeBackendPackageAdapter: RuntimeBackendPackageAdapter = {
+  backendKind: "wordpress-native",
+  prepare(loadedPackage) {
+    const { backendPackage, entrypoint, module } = loadedPackage
+    if (backendPackage.kind !== "native") {
+      throw backendPackageError(backendPackage, `Unsupported native WordPress runtime backend package kind: ${backendPackage.kind}`)
+    }
+    if (!isNativeRuntimeDriverFactory(module)) {
+      throw backendPackageError(backendPackage, `Runtime backend package entrypoint must export createNativeRuntimeDriver(): ${entrypoint}`)
+    }
+
+    return {
+      runtimeBackendContext: { nativeRuntimeDriver: (module as NativeRuntimeDriverFactory).createNativeRuntimeDriver() },
+      diagnostics: [{ status: "passed", message: "Entrypoint exports createNativeRuntimeDriver" }],
+    }
+  },
+}
+
+const runtimeBackendPackageAdapterRegistry = new RuntimeBackendPackageAdapterRegistry([playgroundRuntimeBackendPackageAdapter, nativeRuntimeBackendPackageAdapter])
 
 export class RecipeRuntimeBackendPackageError extends Error {
   readonly code = "recipe-runtime-backend-package-invalid"
@@ -221,6 +240,10 @@ async function importBackendEntrypoint(backendPackage: WorkspaceRecipeRuntimeBac
 
 function isPlaygroundCliModule(value: unknown): value is RuntimeCliEntrypointModule {
   return Boolean(value && typeof value === "object" && "runCLI" in value && typeof (value as { runCLI?: unknown }).runCLI === "function")
+}
+
+function isNativeRuntimeDriverFactory(value: unknown): value is NativeRuntimeDriverFactory {
+  return Boolean(value && typeof value === "object" && "createNativeRuntimeDriver" in value && typeof (value as { createNativeRuntimeDriver?: unknown }).createNativeRuntimeDriver === "function")
 }
 
 function backendPackageError(backendPackage: WorkspaceRecipeRuntimeBackendPackage, message: string): RecipeRuntimeBackendPackageError {
