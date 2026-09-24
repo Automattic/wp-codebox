@@ -1,7 +1,7 @@
 {
   "schema": "wp-codebox/mdi-native-overlay-provenance/v1",
   "repository": "Automattic/markdown-database-integration",
-  "revision": "0bec3f73f5367b692f7b0ab0acfeff55a77500ff",
-  "archive": "markdown-database-integration-0bec3f7.zip",
-  "sha256": "b01d119e994c5c498373edcd2e3a62fcaec72bc8ad360f6c9a209341e1c5cc88"
+  "revision": "49ec9377c1ae884d1fdc506a476d3ade9147150a",
+  "archive": "markdown-database-integration-49ec937.zip",
+  "sha256": "02ae567f779c99f9ba85c6d420d29d301b2acea48899bf3e9c41b6e4fcd09dc7"
 }

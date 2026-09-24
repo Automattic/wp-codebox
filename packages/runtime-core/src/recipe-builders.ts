@@ -186,11 +186,11 @@ function nativeMdiPlugin(plugins: readonly WorkspaceRecipeExtraPlugin[]): Worksp
   }
   return {
     source: "wp-codebox:mdi-native",
-    sha256: "b01d119e994c5c498373edcd2e3a62fcaec72bc8ad360f6c9a209341e1c5cc88",
+    sha256: "02ae567f779c99f9ba85c6d420d29d301b2acea48899bf3e9c41b6e4fcd09dc7",
     slug: "markdown-database-integration",
     pluginFile: "markdown-database-integration/markdown-database-integration.php",
     activate: false,
-    metadata: { phase: "pre-install", databaseDropIn: true, revision: "0bec3f73f5367b692f7b0ab0acfeff55a77500ff" },
+    metadata: { phase: "pre-install", databaseDropIn: true, revision: "49ec9377c1ae884d1fdc506a476d3ade9147150a" },
   }
 }
 
