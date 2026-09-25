@@ -46,6 +46,7 @@ const BROWSER_FILES: readonly string[] = [
   "tests/browser-action-corpus.test.ts",
   "tests/browser-adaptive-exploration.test.ts",
   "tests/browser-canonical-preview-origin.test.ts",
+  "tests/browser-layout-sweep.test.ts",
   "tests/browser-multi-actor-scenario.test.ts",
   "tests/browser-recipe-file-payloads.integration.test.ts",
   "tests/browser-routed-command-security.test.ts",
