@@ -230,7 +230,7 @@ function browserEvidenceFileRef(path: string | undefined, manifestFiles: Map<str
 }
 
 function recipeCommandProducesBrowserEvidence(command: string): boolean {
-  return command.startsWith("wordpress.browser-") || command === "wordpress.editor-canvas-probe" || command === "wordpress.editor-validate-blocks" || command === "wordpress.html-capture" || command === "wordpress.visual-compare"
+  return command.startsWith("wordpress.browser-") || command === "wordpress.editor-canvas-probe" || command === "wordpress.editor-validate-blocks" || command === "wordpress.html-capture" || command === "wordpress.visual-compare" || command === "wordpress.layout-sweep"
 }
 
 export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>, artifactRoot?: string, options?: RecipeRunOptions, inputMountPathMap: readonly InputMountPathMapping[] = [], onContinuationProgress?: (progress: RecipeContinuationProgress) => void, signal?: AbortSignal): Promise<RecipeExecutionResult> {

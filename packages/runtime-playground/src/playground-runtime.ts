@@ -10,7 +10,7 @@ import { browserArtifactFileManifest, browserReviewSummary as browserArtifactRev
 import { normalizeBrowserStorageStatePayload, wordpressFixtureUserStorageStatePhpCode, type WordPressFixtureUserSpec } from "./browser-auth-storage-state.js"
 import { adminFuzzInputFromArgs, adminFuzzPhpCode } from "./admin-fuzz-command-handlers.js"
 import { adminActionInputFromArgs, adminActionPhpCode } from "./admin-action-command-handlers.js"
-import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runEditorValidateBlocksCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
+import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runEditorValidateBlocksCommand, runHtmlCaptureCommand, runLayoutSweepCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
@@ -975,6 +975,21 @@ class PlaygroundRuntime implements Runtime {
     let result: Awaited<ReturnType<typeof runVisualCompareCommand>>
     try {
       result = await runVisualCompareCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, server, spec })
+    } catch (error) {
+      if (isBrowserCommandArtifactError(error)) {
+        this.browserProbes.push(error.artifact)
+      }
+      throw error
+    }
+    this.browserProbes.push(result.artifact)
+    return result.output
+  }
+
+  async runLayoutSweep(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    let result: Awaited<ReturnType<typeof runLayoutSweepCommand>>
+    try {
+      result = await runLayoutSweepCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, server, spec })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)

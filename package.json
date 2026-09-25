@@ -124,6 +124,7 @@
     "generate:cloudflare-canonical-mdi-seed": "npm --prefix packages/runtime-cloudflare run generate:canonical-mdi-seed",
     "smoke": "tsx scripts/run-smoke.ts",
     "test:redaction": "tsx tests/redaction.test.ts",
+    "test:browser-layout-sweep": "tsx --test tests/browser-layout-sweep.test.ts",
     "test:browser-preview-routing": "tsx --test tests/browser-preview-routing.test.ts",
     "test:browser-evaluate-source": "tsx --test tests/browser-evaluate-source.test.ts",
     "test:browser-routed-command-security": "tsx --test tests/browser-routed-command-security.test.ts",

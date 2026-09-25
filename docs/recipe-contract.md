@@ -1054,6 +1054,10 @@ resolve inside the mounted plugin directory.
 
 ## Browser Assertions
 
+`wordpress.layout-sweep` is a product-neutral geometry sweep. Recipes pass `url`, `container-selector`, and `item-selector`. Optional args are `min-width`, `max-width`, `profile=quick|deep`, `seed`, `concurrency`, `timeout`, `scenarios`, and `accepted`. Scenarios are `sweep`, `history`, `storm`, `heights`, `drag`, plus perturbations `text-scale:<percent>`, `block-fonts`, `long-text:<ratio>`, and `dpr:<n>`. The default scenario list is `sweep,history,storm,heights`. Widths settle on two consecutive animation frames with identical geometry, without timers. Quick profile refines a 16px grid to the pixel at mode or finding changes and to 2px at height steps. `mode-property` (default `--layout-mode`) names the container custom property used to separate breakpoint bands.
+
+Finding kinds are `overflow`, `leak`, `overlap`, `collapsed`, `tiny-text`, `distort`, `hscroll`, `jump`, `hysteresis`, `history`, `storm`, `unstable`, and `error`. `overlap` is new relative to the widest width in the same mode. `accepted` is a JSON array keyed by `kind`, `container`, and `item`; matching groups are reported with `suppressed: true`. Output schema is `wp-codebox/layout-sweep/v1`. Artifacts are `files/browser/layout-sweep/summary.json` and `files/browser/layout-sweep/findings.json`. Each grouped finding uses identity `kind + container + item` and includes scenarios, count, width range, worst magnitude, sample, and replay args so fuzz and regression tooling can compare groups across runs. Findings do not fail the command: `status` is `failed` when any group is unsuppressed, and consumers such as a fuzz gate apply pass/fail policy, as with `wordpress.visual-compare`. The same seed reproduces the same report.
+
 `wordpress.visual-compare` preserves native animated-image behavior by default.
 Set `animated-media=first-frame` to normalize supported animated images to a
 static first-frame PNG before Chromium decodes them. Normalization is keyed only

@@ -13,6 +13,7 @@ export { runBrowserProbeCommand, runSingleBrowserProbeCommand, type BrowserProbe
 export { browserWordPressDiagnosticProvider } from "./browser-wordpress-diagnostic-provider.js"
 export { wordpressAdminAuthCookiePhpCode } from "./browser-probe-support.js"
 export { runVisualCompareCommand } from "./browser-visual-compare.js"
+export { runLayoutSweepCommand } from "./browser-layout-sweep.js"
 
 export async function runHtmlCaptureCommand(input: {
   abortSignal?: AbortSignal
