@@ -3,12 +3,12 @@ import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestF
 import type { PlaygroundPreviewProxyDiagnostics } from "./preview-server.js"
 import type { Request } from "playwright"
 
-export type BrowserArtifact = BrowserProbeArtifact | BrowserActionsArtifact | BrowserEditorOpenArtifact | BrowserEditorActionsArtifact | BrowserEditorValidateBlocksArtifact | BrowserScenarioArtifact | BrowserVisualCompareArtifact
+export type BrowserArtifact = BrowserProbeArtifact | BrowserActionsArtifact | BrowserEditorOpenArtifact | BrowserEditorActionsArtifact | BrowserEditorValidateBlocksArtifact | BrowserScenarioArtifact | BrowserVisualCompareArtifact | BrowserLayoutSweepArtifact
 
 export type BrowserArtifactType = BrowserArtifact["artifactType"]
 
 export interface BrowserArtifactBase {
-  artifactType: "probe" | "actions" | "editor-open" | "editor-actions" | "editor-validate-blocks" | "scenario" | "visual-compare"
+  artifactType: "probe" | "actions" | "editor-open" | "editor-actions" | "editor-validate-blocks" | "scenario" | "visual-compare" | "layout-sweep"
   requestedUrl: string
   url: string
   preview: BrowserProbePreviewRouting
@@ -64,6 +64,12 @@ export interface BrowserVisualCompareArtifact extends BrowserArtifactBase {
   summary: BrowserArtifactSummary & { visualCompare: NonNullable<BrowserArtifactSummary["visualCompare"]> }
 }
 
+export interface BrowserLayoutSweepArtifact extends BrowserArtifactBase {
+  artifactType: "layout-sweep"
+  files: BrowserArtifactFiles & { summary: string; layoutSweep: string }
+  summary: BrowserArtifactSummary & { layoutSweep: NonNullable<BrowserArtifactSummary["layoutSweep"]> }
+}
+
 export interface BrowserArtifactFiles {
   actions?: string
   editorState?: string
@@ -101,6 +107,7 @@ export interface BrowserArtifactFiles {
   redirectDiagnostics?: string
   wordpressDiagnostics?: string
   transportFaults?: string
+  layoutSweep?: string
   summary: string
 }
 
@@ -258,6 +265,13 @@ export interface BrowserArtifactSummary {
     captureDiagnostics?: unknown
     explanation?: string
     blocksEngineVisualParity?: string
+  }
+  layoutSweep?: {
+    schema: "wp-codebox/layout-sweep/v1"
+    status: "passed" | "failed"
+    findings: number
+    unsuppressedFindings: number
+    resizes: number
   }
   scriptResult?: unknown
   viewport: BrowserProbeViewport | null
@@ -1271,6 +1285,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   redirectDiagnostics: { kind: "browser-redirect-diagnostics", contentType: "application/json", redact: true },
   wordpressDiagnostics: { kind: "browser-wordpress-diagnostics", contentType: "application/json", redact: true },
   transportFaults: { kind: "browser-transport-faults", contentType: "application/json", redact: true },
+  layoutSweep: { kind: "browser-layout-sweep", contentType: "application/json", redact: true },
   summary: { kind: "browser-summary", contentType: "application/json", redact: true },
 }
 

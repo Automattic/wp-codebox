@@ -57,6 +57,7 @@ interface PlaygroundCommandRuntime {
   runBrowserActions(spec: ExecutionSpec): Promise<string>
   runBrowserScenario(spec: ExecutionSpec): Promise<string>
   runVisualCompare(spec: ExecutionSpec): Promise<string>
+  runLayoutSweep(spec: ExecutionSpec): Promise<string>
   runEditorOpen(spec: ExecutionSpec): Promise<string>
   runEditorActions(spec: ExecutionSpec): Promise<string>
   runEditorValidateBlocks(spec: ExecutionSpec): Promise<string>

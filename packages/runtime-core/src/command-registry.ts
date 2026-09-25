@@ -171,6 +171,22 @@ const browserActionsValidation: CommandValidationDescriptor = {
   ],
 }
 
+const layoutSweepValidation: CommandValidationDescriptor = {
+  requiredArgs: [
+    { name: "url", code: "missing-url", message: "wordpress.layout-sweep requires url=<path-or-url>." },
+    { name: "container-selector", code: "missing-container-selector", message: "wordpress.layout-sweep requires container-selector=<selector>." },
+    { name: "item-selector", code: "missing-item-selector", message: "wordpress.layout-sweep requires item-selector=<selector>." },
+  ],
+  argRules: [
+    { name: "min-width", kind: "positive-integer", code: "invalid-min-width", message: "wordpress.layout-sweep min-width must be a positive integer." },
+    { name: "max-width", kind: "positive-integer", code: "invalid-max-width", message: "wordpress.layout-sweep max-width must be a positive integer." },
+    { name: "profile", kind: "enum", values: ["quick", "deep"], code: "invalid-profile", message: "wordpress.layout-sweep profile must be quick or deep." },
+    { name: "seed", kind: "positive-integer", code: "invalid-seed", message: "wordpress.layout-sweep seed must be a positive integer." },
+    { name: "concurrency", kind: "positive-integer", code: "invalid-concurrency", message: "wordpress.layout-sweep concurrency must be a positive integer." },
+    { name: "timeout", kind: "duration", code: "invalid-timeout", message: "wordpress.layout-sweep timeout must look like 500ms or 180s." },
+  ],
+}
+
 const browserScenarioValidation: CommandValidationDescriptor = {
   requiredAnyArgs: [
     { names: ["scenario-json", "url"], code: "missing-scenario", message: "wordpress.browser-scenario requires scenario-json=<object> or url=<path-or-url>." },
@@ -1294,6 +1310,33 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.visual-compare.",
     recipe: true,
     handler: { kind: "playground", method: "runVisualCompare" },
+  },
+  {
+    id: "wordpress.layout-sweep",
+    description: "Sweep a preview across viewport widths and resize histories, then report geometry invariant findings. Container and item selectors are caller-supplied; the command is not tied to a specific block or theme.",
+    acceptedArgs: [
+      { name: "url", description: "Preview path or absolute URL to measure.", required: true, format: "path or URL" },
+      { name: "container-selector", description: "CSS selector for layout containers to measure.", required: true, format: "CSS selector" },
+      { name: "item-selector", description: "CSS selector for items inside each container. :scope is evaluated against the container.", required: true, format: "CSS selector" },
+      { name: "min-width", description: "Minimum viewport width in CSS pixels. Defaults to 320.", format: "positive integer" },
+      { name: "max-width", description: "Maximum viewport width in CSS pixels. Defaults to 1920.", format: "positive integer" },
+      { name: "profile", description: "quick uses a 16px grid refined to the pixel. deep uses a 2px grid and longer history and storm budgets.", format: "quick|deep" },
+      { name: "seed", description: "Seed for history and storm width order. The same seed reproduces the same report.", format: "positive integer" },
+      { name: "concurrency", description: "Maximum parallel pages for sweep chunks and scenarios. Defaults to 4.", format: "positive integer from 1 to 8" },
+      { name: "scenarios", description: "Comma-separated scenarios. Core scenarios are sweep, history, storm, heights, and drag. Perturbations are text-scale:<percent>, block-fonts, long-text:<ratio>, and dpr:<n>. Defaults to sweep,history,storm,heights.", format: "comma-separated scenario names" },
+      { name: "accepted", description: "JSON array of known findings to report without failing. Each entry is keyed by kind, container, and item.", format: "JSON array" },
+      { name: "timeout", description: "Wall-clock budget for the sweep.", format: "duration, e.g. 180s or 500ms" },
+    ],
+    outputShape: "wp-codebox/layout-sweep/v1 JSON summary plus files/browser/layout-sweep/summary.json and files/browser/layout-sweep/findings.json. Findings are grouped by kind, container, and item, with scenarios, count, width range, worst magnitude, sample, and replay args, so each group maps to a homeboy/fuzz-finding/v1 identity.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/layout-sweep/v1", {
+      summary: { type: "object" },
+      artifacts: { type: "object" },
+      findings: { type: "array" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.layout-sweep.",
+    validation: layoutSweepValidation,
+    recipe: true,
+    handler: { kind: "playground", method: "runLayoutSweep" },
   },
   {
     id: "wordpress.editor-open",
