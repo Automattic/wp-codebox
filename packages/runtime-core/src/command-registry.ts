@@ -1328,7 +1328,7 @@ export const commandRegistry = [
       { name: "accepted", description: "JSON array of known findings to report without failing. Each entry is keyed by kind, container, and item.", format: "JSON array" },
       { name: "timeout", description: "Wall-clock budget for the sweep.", format: "duration, e.g. 180s or 500ms" },
     ],
-    outputShape: "wp-codebox/layout-sweep/v1 JSON summary plus files/browser/layout-sweep/summary.json and files/browser/layout-sweep/findings.json. Findings are grouped by kind, container, and item, with scenarios, count, width range, worst magnitude, sample, and replay args, so each group maps to a homeboy/fuzz-finding/v1 identity.",
+    outputShape: "wp-codebox/layout-sweep/v1 JSON summary plus files/browser/layout-sweep/summary.json and files/browser/layout-sweep/findings.json. Findings are grouped by kind, container, and item, with scenarios, count, width range, worst magnitude, sample, and replay args, so each group has a stable identity that fuzz and regression tooling can compare across runs.",
     outputSchema: objectEnvelopeSchema("wp-codebox/layout-sweep/v1", {
       summary: { type: "object" },
       artifacts: { type: "object" },

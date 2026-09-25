@@ -12,7 +12,7 @@ import { argValue, durationArg } from "./command-args.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 
 export const LAYOUT_SWEEP_SCHEMA = "wp-codebox/layout-sweep/v1"
-export const LAYOUT_SWEEP_FINDING_SCHEMA = "homeboy/fuzz-finding/v1"
+export const LAYOUT_SWEEP_FINDING_SCHEMA = "wp-codebox/layout-sweep-finding/v1"
 export const LAYOUT_SWEEP_COMMAND = "wordpress.layout-sweep"
 export const LAYOUT_SWEEP_ARTIFACT_PREFIX = "files/browser/layout-sweep"
 // Custom property on each container that names its current layout mode, so a
@@ -252,7 +252,7 @@ export async function runLayoutSweepCommand({
   await artifactSession.writeJson("summary", "summary.json", report)
   await artifactSession.writeJson("layoutSweep", "findings.json", report.findings)
   // Findings are evidence, not a command failure: report.status records them
-  // and consumers (for example a Homeboy fuzz gate) apply pass/fail policy,
+  // and consumers (for example a fuzz gate) apply pass/fail policy,
   // matching wordpress.visual-compare.
   const artifact = layoutSweepArtifact(report, options.url, targetUrl, preview)
   return browserCommandResult(artifact, report)
