@@ -1,3 +1,4 @@
+import { posix } from "node:path"
 import { phpEnvAssignmentFunction, phpWpConfigDefineAppenderFunction } from "./php-snippets.js"
 
 export interface PhpunitRunCodeOptions {
@@ -74,8 +75,14 @@ interface PhpunitChangedTestFilterPhpOptions {
   relativeFunctionName: string
   filterFunctionName: string
   logFunction: string
+  /**
+   * PHP variable name (without the leading `$`) that receives the
+   * discovery/component root at the call site. This must be the same base
+   * `<directory>`/`<file>` entries in phpunit.xml are resolved against
+   * (`dirname($xml_path)` in phpunitConfigDiscoveryPhp's basePathExpression),
+   * not the test root or any other anchor — see issue #2528.
+   */
   rootParameterName: string
-  testsPathFallback: boolean
 }
 
 function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): string {
@@ -252,9 +259,6 @@ function phpunitDiscoveryPhp(functionName: string, logFunction: string): string 
 }
 
 function phpunitChangedTestFilterPhp(options: PhpunitChangedTestFilterPhpOptions): string {
-  const testsPathFallback = options.testsPathFallback ? ` elseif (strpos($path, '/tests/') !== false) {
-        $path = substr($path, strpos($path, '/tests/') + 1);
-    }` : ""
   return `function ${options.filterFunctionName}(array $test_files, string $changed_files_json, string $${options.rootParameterName}): array {
     $decoded = json_decode($changed_files_json, true);
     if (!is_array($decoded) || empty($decoded)) {
@@ -282,14 +286,30 @@ function phpunitChangedTestFilterPhp(options: PhpunitChangedTestFilterPhpOptions
 
 function ${options.relativeFunctionName}(string $path, string $${options.rootParameterName}): string {
     $path = trim(str_replace('\\\\', '/', $path));
-    $${options.rootParameterName} = rtrim(str_replace('\\\\', '/', $${options.rootParameterName}), '/');
-    if (strpos($path, $${options.rootParameterName} . '/') === 0) {
-        $path = substr($path, strlen($${options.rootParameterName}) + 1);
-    }${testsPathFallback}
-    while (strpos($path, './') === 0) {
-        $path = substr($path, 2);
+    if ($path === '') {
+        return '';
     }
-    return ltrim($path, '/');
+    if ($path[0] !== '/') {
+        $${options.rootParameterName} = rtrim(str_replace('\\\\', '/', $${options.rootParameterName}), '/');
+        $path = $${options.rootParameterName} . '/' . ltrim(preg_replace('#^(?:\\\\./)+#', '', $path), '/');
+    }
+    // Canonicalize through the filesystem so a component-root-relative discovery path
+    // (e.g. "./tests/Unit/Core/X.php", resolved against dirname($xml_path)) and a
+    // sandbox-absolute changed-file path land on the same key when they name the same
+    // file. Without this, the two sides are normalized against different bases and can
+    // never compare equal (#2528).
+    $real = realpath($path);
+    if ($real !== false) {
+        return str_replace('\\\\', '/', $real);
+    }
+    // realpath() fails for paths that do not exist on disk, e.g. a changed file the diff
+    // deleted. Fall back to a best-effort absolute, slash-normalized path so an
+    // already-absolute changed path still compares consistently even though it cannot be
+    // canonicalized against the filesystem.
+    while (strpos($path, '/./') !== false) {
+        $path = str_replace('/./', '/', $path);
+    }
+    return $path;
 }`
 }
 
@@ -1326,8 +1346,7 @@ ${phpunitChangedTestFilterPhp({
     relativeFunctionName: "pg_component_relative_path",
     filterFunctionName: "pg_filter_changed_test_files",
     logFunction: "pg_log",
-    rootParameterName: "plugin_path",
-    testsPathFallback: true,
+    rootParameterName: "component_root",
   })}
 
 ${phpunitArgsPhp("wp_codebox_phpunit_args", "pg_log")}
@@ -1574,7 +1593,11 @@ try {
     }
     list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir, $selected_testsuites);
     $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);
-    $test_files = pg_filter_changed_test_files($test_files, $changed_test_files_raw, $test_dir);
+    // The third argument must be the same base <directory>/<file> entries in phpunit.xml were
+    // resolved against (dirname($xml_path), phpunitConfigDiscoveryPhp's basePathExpression
+    // above), not $test_dir. They differ whenever the configured tests root isn't the
+    // directory the phpunit.xml file itself lives in, which is the mismatch behind #2528.
+    $test_files = pg_filter_changed_test_files($test_files, $changed_test_files_raw, ${JSON.stringify(posix.dirname(options.phpunitXml))});
     if ($selected_test_file !== '') {
         $selected_abs = pg_resolve_selected_test_file($selected_test_file, $test_dir, $runtime_cwd, $plugin_path);
         if (!in_array($selected_abs, $test_files, true)) {
@@ -1821,8 +1844,7 @@ ${phpunitChangedTestFilterPhp({
     relativeFunctionName: "core_pg_relative_path",
     filterFunctionName: "core_pg_filter_changed_test_files",
     logFunction: "core_pg_log",
-    rootParameterName: "core_root",
-    testsPathFallback: false,
+    rootParameterName: "component_root",
   })}
 
 ${phpunitArgsPhp("core_pg_phpunit_args", "core_pg_log")}
@@ -1893,7 +1915,11 @@ core_pg_stage_begin('discover_tests');
 try {
     list($directories, $suffixes, $prefixes, $excludes, $configured_files) = core_pg_parse_phpunit_config($phpunit_xml, $tests_dir . '/tests');
     $test_files = core_pg_discover_tests($directories, $suffixes, $prefixes, $excludes, $configured_files);
-    $test_files = core_pg_filter_changed_test_files($test_files, $changed_test_files_raw, $core_root);
+    // The third argument must be the same base <directory>/<file> entries in phpunit.xml were
+    // resolved against (dirname($xml_path), phpunitConfigDiscoveryPhp's basePathExpression
+    // above), not $core_root. They differ whenever the phpunit.xml file doesn't live directly
+    // at the core root, which is the mismatch behind #2528.
+    $test_files = core_pg_filter_changed_test_files($test_files, $changed_test_files_raw, dirname($phpunit_xml));
     if ($selected_test_file !== '') {
         $selected_abs = $selected_test_file[0] === '/' ? $selected_test_file : $core_root . '/' . ltrim($selected_test_file, '/');
         if (!in_array($selected_abs, $test_files, true)) {
