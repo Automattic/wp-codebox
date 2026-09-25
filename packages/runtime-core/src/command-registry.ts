@@ -1318,6 +1318,7 @@ export const commandRegistry = [
       { name: "url", description: "Preview path or absolute URL to measure.", required: true, format: "path or URL" },
       { name: "container-selector", description: "CSS selector for layout containers to measure.", required: true, format: "CSS selector" },
       { name: "item-selector", description: "CSS selector for items inside each container. :scope is evaluated against the container.", required: true, format: "CSS selector" },
+      { name: "mode-property", description: "CSS custom property on each container whose computed value names its current layout mode; changes separate breakpoint bands. Defaults to --layout-mode.", format: "CSS custom property name" },
       { name: "min-width", description: "Minimum viewport width in CSS pixels. Defaults to 320.", format: "positive integer" },
       { name: "max-width", description: "Maximum viewport width in CSS pixels. Defaults to 1920.", format: "positive integer" },
       { name: "profile", description: "quick uses a 16px grid refined to the pixel. deep uses a 2px grid and longer history and storm budgets.", format: "quick|deep" },

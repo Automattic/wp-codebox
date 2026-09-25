@@ -20,7 +20,6 @@ import {
   type LayoutSweepPage,
   type LayoutSweepReport,
 } from "../packages/runtime-playground/dist/browser-layout-sweep.js"
-import { isBrowserCommandArtifactError } from "../packages/runtime-playground/dist/browser-command-artifact-error.js"
 import { withTempDir } from "../scripts/test-kit.js"
 
 // ---------------------------------------------------------------------------
@@ -94,6 +93,20 @@ body{margin:0;font-family:sans-serif}
 <div id="collapsed-container" class="layout-container"><div class="layout-item"><svg viewBox="0 0 1 1"><rect width="1" height="1"/></svg></div></div>
 <div id="tiny-text-container" class="layout-container"><div class="layout-item">tiny</div></div>
 </body></html>`,
+
+  // A component-specific mode signal: layout and overlap change together at a
+  // breakpoint that only --component-viewport announces.
+  "/custom-mode": `<!doctype html>
+<html><head><style>
+*{box-sizing:border-box}
+body{margin:0}
+.c{position:relative;--component-viewport:narrow;height:100px}
+.c .i{position:absolute;top:0;width:100px;height:40px}
+.c .a{left:0}
+.c .b{left:60px}
+@media (min-width:800px){ .c{--component-viewport:wide;height:300px} .c .b{left:200px} }
+</style></head>
+<body><div id="custom" class="c"><div class="i a">A</div><div class="i b">B</div></div></body></html>`,
 
   // Fully static: no responsive behavior, nothing should ever be flagged.
   "/deterministic": `<!doctype html>
@@ -305,6 +318,31 @@ test("each layout invariant fires on its minimal fixture, and findings group by 
   }
 })
 
+test("mode-property separates breakpoint bands so a mode switch is neither a jump nor a new overlap", async () => {
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const url = `${baseUrl}/custom-mode`
+    const sweep = (modeProperty?: string) => runLayoutSweep({
+      browser,
+      url,
+      openPage: openPageFor(browser, url),
+      options: { url, containerSelector: ".c", itemSelector: ":scope > .i", modeProperty, minWidth: 700, maxWidth: 900, profile: "quick", seed: 1, concurrency: 1, scenarios: ["sweep"], height: 400 },
+    })
+    // Without the component's signal the switch reads as a height jump, and
+    // the authored narrow overlap reads as new relative to the wide anchor.
+    const unaware = await sweep()
+    assert.ok(findingsOf(unaware, "jump").length > 0)
+    assert.ok(findingsOf(unaware, "overlap").length > 0)
+    // With it, the switch is a band boundary and each band has its own anchor.
+    const aware = await sweep("--component-viewport")
+    assert.equal(findingsOf(aware, "jump").length, 0, JSON.stringify(aware.findings))
+    assert.equal(findingsOf(aware, "overlap").length, 0, JSON.stringify(aware.findings))
+    assert.ok(aware.boundaries.some((boundary) => boundary.kind === "signature" && boundary.low === 799 && boundary.high === 800))
+  } finally {
+    await browser.close()
+  }
+})
+
 test("history and storm report no drift on a deterministic page", async () => {
   const browser = await chromium.launch({ headless: true })
   try {
@@ -399,6 +437,9 @@ test("layoutSweepOptionsFromArgs parses accepted identities and rejects unknown 
   assert.deepEqual(options.scenarios, ["sweep", "history"])
   assert.throws(() => layoutSweepOptionsFromArgs(["url=/preview", "container-selector=.c", "item-selector=.i", "scenarios=not-a-real-scenario"]), /scenarios must be/)
   assert.throws(() => layoutSweepOptionsFromArgs(["container-selector=.c", "item-selector=.i"]), /requires url/)
+  assert.equal(layoutSweepOptionsFromArgs(["url=/p", "container-selector=.c", "item-selector=.i", "mode-property=--canvas-viewport"]).modeProperty, "--canvas-viewport")
+  assert.equal(layoutSweepOptionsFromArgs(["url=/p", "container-selector=.c", "item-selector=.i"]).modeProperty, "--layout-mode")
+  assert.throws(() => layoutSweepOptionsFromArgs(["url=/p", "container-selector=.c", "item-selector=.i", "mode-property=color"]), /custom property/)
 })
 
 test("groupLayoutFindings groups by kind, container, and item and marks accepted identities suppressed", () => {
@@ -425,7 +466,7 @@ test("groupLayoutFindings groups by kind, container, and item and marks accepted
   assert.equal(otherOverflowGroup!.suppressed, false)
 })
 
-test("wordpress.layout-sweep command wiring writes artifacts, passes on a clean page, and fails on unsuppressed findings", async () => {
+test("wordpress.layout-sweep command wiring writes artifacts and reports findings in status without failing the command", async () => {
   await withTempDir("wp-codebox-layout-sweep-", async (artifactRoot) => {
     const server1 = { serverUrl: `${baseUrl}/deterministic`, playground: { run: async () => ({ text: "" }) }, async [Symbol.asyncDispose]() {} }
     const passing = await runLayoutSweepCommand({
@@ -447,24 +488,18 @@ test("wordpress.layout-sweep command wiring writes artifacts, passes on a clean 
     assert.equal(persistedSummary.status, "passed")
 
     const server2 = { serverUrl: `${baseUrl}/mixed`, playground: { run: async () => ({ text: "" }) }, async [Symbol.asyncDispose]() {} }
-    await assert.rejects(
-      runLayoutSweepCommand({
-        artifactRoot,
-        server: server2 as never,
-        spec: {
-          command: "wordpress.layout-sweep",
-          args: [`url=${baseUrl}/mixed`, "container-selector=.layout-container", "item-selector=.layout-item", "min-width=700", "max-width=1000", "scenarios=sweep", "concurrency=2"],
-        },
-      }),
-      (error: unknown) => {
-        assert.ok(isBrowserCommandArtifactError(error))
-        const artifact = (error as { artifact: { artifactType: string; summary: { layoutSweep: { status: string } } } }).artifact
-        assert.equal(artifact.artifactType, "layout-sweep")
-        assert.equal(artifact.summary.layoutSweep.status, "failed")
-        assert.ok(artifact.summary.layoutSweep.unsuppressedFindings > 0)
-        return true
+    // Findings are reported, not thrown: the command succeeds with status failed.
+    const reporting = await runLayoutSweepCommand({
+      artifactRoot,
+      server: server2 as never,
+      spec: {
+        command: "wordpress.layout-sweep",
+        args: [`url=${baseUrl}/mixed`, "container-selector=.layout-container", "item-selector=.layout-item", "min-width=700", "max-width=1000", "scenarios=sweep", "concurrency=2"],
       },
-    )
+    })
+    const reportingOutput = JSON.parse(reporting.output)
+    assert.equal(reportingOutput.status, "failed")
+    assert.ok(reportingOutput.unsuppressedFindings > 0)
     const failedFindings = JSON.parse(await readFile(join(artifactRoot, "files/browser/layout-sweep/findings.json"), "utf8"))
     assert.ok(Array.isArray(failedFindings))
     assert.ok(failedFindings.length > 0)

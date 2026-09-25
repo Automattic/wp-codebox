@@ -4,7 +4,6 @@ import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import type { BrowserArtifact, BrowserProbePreviewRouting } from "./browser-artifacts.js"
 import { settleByFrameStability } from "./browser-frame-stability.js"
 import { browserEnvironmentCell, createPlaywrightBrowserEnvironmentContext, resolvePlaywrightBrowserEnvironment } from "./browser-environment-matrix.js"
-import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
 import { withBrowserCommandLiveness } from "./browser-liveness.js"
 import { browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewRouting, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, type BrowserPreviewNetworkPolicy, type BrowserPreviewRouteTracker } from "./browser-preview-routing.js"
 import { browserCommandResult } from "./browser-result-sanitization.js"
@@ -16,6 +15,9 @@ export const LAYOUT_SWEEP_SCHEMA = "wp-codebox/layout-sweep/v1"
 export const LAYOUT_SWEEP_FINDING_SCHEMA = "homeboy/fuzz-finding/v1"
 export const LAYOUT_SWEEP_COMMAND = "wordpress.layout-sweep"
 export const LAYOUT_SWEEP_ARTIFACT_PREFIX = "files/browser/layout-sweep"
+// Custom property on each container that names its current layout mode, so a
+// breakpoint switch separates bands instead of reading as a jump or overlap.
+export const DEFAULT_MODE_PROPERTY = "--layout-mode"
 
 const TOLERANCE = 1.5
 const DEFAULT_MIN_WIDTH = 320
@@ -124,6 +126,7 @@ export interface LayoutSweepOptions {
   url: string
   containerSelector: string
   itemSelector: string
+  modeProperty?: string
   minWidth?: number
   maxWidth?: number
   profile?: "quick" | "deep"
@@ -248,10 +251,10 @@ export async function runLayoutSweepCommand({
   }
   await artifactSession.writeJson("summary", "summary.json", report)
   await artifactSession.writeJson("layoutSweep", "findings.json", report.findings)
+  // Findings are evidence, not a command failure: report.status records them
+  // and consumers (for example a Homeboy fuzz gate) apply pass/fail policy,
+  // matching wordpress.visual-compare.
   const artifact = layoutSweepArtifact(report, options.url, targetUrl, preview)
-  if (report.status === "failed") {
-    throw new BrowserCommandArtifactError(`wordpress.layout-sweep found ${report.unsuppressedFindings} unsuppressed layout finding(s)`, artifact)
-  }
   return browserCommandResult(artifact, report)
 }
 
@@ -298,7 +301,7 @@ export async function runLayoutSweep({
     findings.push({ scenario, kind, container: context.container ?? null, item: context.item ?? null, ...context })
   }
 
-  const read = (page: Page) => readLayoutSnapshot(page, options.containerSelector, options.itemSelector)
+  const read = (page: Page) => readLayoutSnapshot(page, options.containerSelector, options.itemSelector, options.modeProperty ?? DEFAULT_MODE_PROPERTY)
 
   const resize = async (page: Page, width: number, viewportHeight = height) => {
     await page.setViewportSize({ width, height: viewportHeight })
@@ -525,6 +528,8 @@ export function layoutSweepOptionsFromArgs(args: string[]): LayoutSweepOptions {
   const url = argValue(args, "url")?.trim()
   const containerSelector = argValue(args, "container-selector")?.trim()
   const itemSelector = argValue(args, "item-selector")?.trim()
+  const modeProperty = argValue(args, "mode-property")?.trim() || DEFAULT_MODE_PROPERTY
+  if (!/^--[A-Za-z0-9_-]{1,120}$/.test(modeProperty)) throw new Error("wordpress.layout-sweep mode-property must be a CSS custom property name such as --layout-mode")
   if (!url) throw new Error("wordpress.layout-sweep requires url=<path-or-url>")
   if (!containerSelector) throw new Error("wordpress.layout-sweep requires container-selector=<selector>")
   if (!itemSelector) throw new Error("wordpress.layout-sweep requires item-selector=<selector>")
@@ -537,6 +542,7 @@ export function layoutSweepOptionsFromArgs(args: string[]): LayoutSweepOptions {
     url,
     containerSelector,
     itemSelector,
+    modeProperty,
     minWidth: positiveIntegerArg(args, "min-width", DEFAULT_MIN_WIDTH),
     maxWidth: positiveIntegerArg(args, "max-width", DEFAULT_MAX_WIDTH),
     profile,
@@ -619,13 +625,13 @@ function collectMissing(opened: LayoutSweepPage, missing: Set<string>): void {
   for (const resource of opened.missingResources) missing.add(resource)
 }
 
-async function readLayoutSnapshot(page: Page, containerSelector: string, itemSelector: string): Promise<LayoutSnapshot> {
-  return page.evaluate(({ containerSelector, itemSelector }) => {
+async function readLayoutSnapshot(page: Page, containerSelector: string, itemSelector: string, modeProperty: string): Promise<LayoutSnapshot> {
+  return page.evaluate(({ containerSelector, itemSelector, modeProperty }) => {
     const round = (value: number) => Math.round(value * 10) / 10
     const pageOverflow = document.documentElement.scrollWidth - window.innerWidth
     const containers = [...document.querySelectorAll(containerSelector)].map((container, containerIndex) => {
       const box = container.getBoundingClientRect()
-      const mode = getComputedStyle(container).getPropertyValue("--layout-mode").trim()
+      const mode = getComputedStyle(container).getPropertyValue(modeProperty).trim()
       const labelSource = container.id ? `#${container.id}` : ([...container.classList][0] ?? container.tagName.toLowerCase())
       const items = [...container.querySelectorAll(itemSelector)].map((item, index) => {
         const rect = item.getBoundingClientRect()
@@ -691,7 +697,7 @@ async function readLayoutSnapshot(page: Page, containerSelector: string, itemSel
       }
     })
     return { pageOverflow: round(pageOverflow), containers }
-  }, { containerSelector, itemSelector })
+  }, { containerSelector, itemSelector, modeProperty })
 }
 
 async function expandLayoutText(page: Page, ratio: number, containerSelector?: string): Promise<void> {
@@ -908,6 +914,7 @@ function layoutSweepReplay(options: LayoutSweepOptions, url: string, scenarios: 
       `url=${url}`,
       `container-selector=${options.containerSelector}`,
       `item-selector=${options.itemSelector}`,
+      `mode-property=${options.modeProperty ?? DEFAULT_MODE_PROPERTY}`,
       `min-width=${resolved.minWidth}`,
       `max-width=${resolved.maxWidth}`,
       `profile=${resolved.profile}`,
