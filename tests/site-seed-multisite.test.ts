@@ -60,6 +60,10 @@ assert.deepEqual(blueprint.steps.map((step) => step.step), ["defineSiteUrl", "en
 assert.equal(blueprint.steps[0]?.siteUrl, "http://alpha.example.test/")
 assert.match(blueprint.steps[2]?.code ?? "", /wp_insert_site/)
 assert.match(blueprint.steps[2]?.code ?? "", /HTTP_HOST/)
+// Mapped domains are first-party: safe redirects between them must survive
+// Playground's platform mu-plugin, which replaces allowed_redirect_hosts.
+assert.match(blueprint.steps[2]?.code ?? "", /000-wp-codebox-mapped-hosts\.php/)
+assert.match(blueprint.steps[2]?.code ?? "", /'allowed_redirect_hosts'[\s\S]*array_merge\(\(array\) \$hosts, __WP_CODEBOX_MAPPED_HOSTS__\)[\s\S]*PHP_INT_MAX/)
 
 const browser = browserPreviewTopology([], spec, "http://127.0.0.1:9400")
 assert.deepEqual(browser.routedHosts, ["alpha.example.test", "beta.example.test"])
