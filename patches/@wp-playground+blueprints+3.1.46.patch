@@ -1,0 +1,26 @@
+diff --git a/node_modules/@wp-playground/blueprints/index.cjs b/node_modules/@wp-playground/blueprints/index.cjs
+index 57e207a..bca2caf 100644
+--- a/node_modules/@wp-playground/blueprints/index.cjs
++++ b/node_modules/@wp-playground/blueprints/index.cjs
+@@ -366,7 +366,7 @@ class WP_MySQL_Naive_Query_Stream {
+ 		foreach($meta as $name => $value) {
+ 			update_user_meta(${N.phpVar(o)}, $name, $value);
+ 		}
+-		`})},Gr="/tmp/wp-cli.phar",Ys={resource:"url",url:"https://playground.wordpress.net/wp-cli.phar"},Lt=async(e,t=Gr)=>{if(!await e.fileExists(t))throw new Error(`wp-cli.phar not found at ${t}.
++		`})},Gr="/tmp/wp-cli.phar",Ys={resource:"url",url:(typeof process !== "undefined" && process.env && process.env.WP_CODEBOX_WP_CLI_PHAR_URL) || "https://raw.githubusercontent.com/wp-cli/builds/d2dd0416fa396699c7a1fffd6ae2eb7788819a71/phar/wp-cli.phar"},Lt=async(e,t=Gr)=>{if(!await e.fileExists(t))throw new Error(`wp-cli.phar not found at ${t}.
+ 			You can enable wp-cli support by adding "wp-cli" to the list of extra libraries in your blueprint as follows:
+ 			{
+ 				"extraLibraries": [ "wp-cli" ]
+diff --git a/node_modules/@wp-playground/blueprints/index.js b/node_modules/@wp-playground/blueprints/index.js
+index b0cee8f..1f990ac 100644
+--- a/node_modules/@wp-playground/blueprints/index.js
++++ b/node_modules/@wp-playground/blueprints/index.js
+@@ -1141,7 +1141,7 @@ const Tt = async (e, { options: t }) => {
+    *        whitespaces and are removed, and even 500KB when libraries
+    *        like the JavaScript parser or Composer are removed.
+    */
+-  url: "https://playground.wordpress.net/wp-cli.phar"
++  url: (typeof process !== "undefined" && process.env && process.env.WP_CODEBOX_WP_CLI_PHAR_URL) || "https://raw.githubusercontent.com/wp-cli/builds/d2dd0416fa396699c7a1fffd6ae2eb7788819a71/phar/wp-cli.phar"
+ }, Rt = async (e, t = Yr) => {
+   if (!await e.fileExists(t))
+     throw new Error(`wp-cli.phar not found at ${t}.

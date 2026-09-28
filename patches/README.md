@@ -26,3 +26,15 @@ ABI exports from WordPress Playground PR
 package version stays at 3.1.46 so `@php-wasm/node` 3.1.46 dedupes onto it. Remove
 the overlay after the Playground driver and PHP 8.3 overlay move together onto a
 release that contains both #4108 and #4170.
+
+`@wp-playground+blueprints+3.1.46.patch` replaces the wp-cli.phar source that
+Playground injects whenever a blueprint uses `extraLibraries: ["wp-cli"]`, a
+`wp-cli` step, or `enableMultisite`. Upstream hardcodes
+`https://playground.wordpress.net/wp-cli.phar` (still true in 3.1.56); that
+host returned 403 on 2026-09-28 and blocked every Extra Chill network deploy
+(#2537). The patch points at the official wp-cli build pinned by commit —
+`wp-cli/builds@d2dd0416` (`phar/wp-cli.phar`, WP-CLI 2.12.0) on
+raw.githubusercontent.com, which serves CORS headers for browser Playground —
+and honors a `WP_CODEBOX_WP_CLI_PHAR_URL` environment override in Node. Bump
+the pin deliberately when upgrading wp-cli. Remove the patch once Playground
+lets callers supply the wp-cli resource.
