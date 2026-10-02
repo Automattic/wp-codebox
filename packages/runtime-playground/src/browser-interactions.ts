@@ -5,6 +5,7 @@ import { browserActionLoadState, browserDeepEqual, browserStepTimeoutMs, duratio
 import type { BrowserEditorMutationSummary, BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepReadiness, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserCommandLivenessPolicy, withBrowserCommandLiveness } from "./browser-liveness.js"
 import type { BrowserPresentation } from "./browser-presentation.js"
+import { executeBrowserAnnotation } from "./browser-annotations.js"
 
 export interface BrowserStepOutcome {
   assertion?: BrowserStepAssertion
@@ -213,6 +214,9 @@ export async function executeBrowserInteractionStep(
       }
     }
     case "capture":
+      return {}
+    case "annotate":
+      await executeBrowserAnnotation(page, step)
       return {}
     case "callTool":
       throw new Error("wordpress.browser-actions callTool requires the host-tool execution bridge, which is not available in this browser step executor")

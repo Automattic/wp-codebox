@@ -31,6 +31,7 @@ export const BROWSER_INTERACTION_STEP_KINDS = [
   "screenshot",
   "capture",
   "callTool",
+  "annotate",
 ] as const
 
 export type BrowserInteractionStepKind = typeof BROWSER_INTERACTION_STEP_KINDS[number]
@@ -99,11 +100,18 @@ export interface BrowserInteractionStep {
   tool?: string
   /** JSON input passed to the caller-provided host tool. */
   input?: JsonValue
-  position?: "top" | "bottom"
+  position?: "top" | "center" | "bottom"
   by?: { x: number; y: number }
   behavior?: "smooth" | "instant"
-  durationMs?: number
   block?: "start" | "center" | "end"
+  id?: string
+  shape?: "highlight" | "spotlight" | "arrow" | "label" | "caption"
+  clear?: string[] | true
+  style?: { variant?: "ring" | "box" | "underline"; padding?: number }
+  anchor?: { selector: string; placement?: "top" | "bottom" | "left" | "right" }
+  durationMs?: number
+  animate?: "draw" | "fade" | "none"
+  direction?: "top" | "bottom" | "left" | "right" | "top-left" | "top-right" | "bottom-left" | "bottom-right"
 }
 
 export interface BrowserToolVerifierInputSummary {
@@ -367,6 +375,21 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
         } else if (!isJsonValue(step.input)) {
           issues.push({ index, message: "callTool step input must be JSON-serializable" })
         }
+        break
+      case "annotate":
+        if (step.clear !== undefined) {
+          if (step.clear !== true && (!Array.isArray(step.clear) || step.clear.some((id) => typeof id !== "string" || !id))) issues.push({ index, message: "annotate clear must be true or an array of ids" })
+          if (step.shape !== undefined) issues.push({ index, message: "annotate clear cannot include shape" })
+          break
+        }
+        if (!( ["highlight", "spotlight", "arrow", "label", "caption"] as const).includes(step.shape as never)) issues.push({ index, message: "annotate requires shape: highlight, spotlight, arrow, label, or caption" })
+        if (step.durationMs !== undefined && (!Number.isFinite(step.durationMs) || step.durationMs < 0)) issues.push({ index, message: "annotate durationMs must be a non-negative number" })
+        if (step.animate !== undefined && !["draw", "fade", "none"].includes(step.animate)) issues.push({ index, message: "annotate animate must be draw, fade, or none" })
+        if (["highlight", "spotlight", "arrow"].includes(String(step.shape)) && !hasSelector) issues.push({ index, message: `annotate ${step.shape} requires selector` })
+        if (["label", "caption"].includes(String(step.shape)) && !hasText) issues.push({ index, message: `annotate ${step.shape} requires text` })
+        if (step.shape === "label" && (!step.anchor || typeof step.anchor.selector !== "string" || !step.anchor.selector)) issues.push({ index, message: "annotate label requires anchor.selector" })
+        if (step.shape === "caption" && step.position !== undefined && !["top", "center", "bottom"].includes(step.position)) issues.push({ index, message: "annotate caption position must be top, center, or bottom" })
+        if (step.shape === "arrow" && step.direction !== undefined && !["top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"].includes(step.direction)) issues.push({ index, message: "annotate arrow direction is invalid" })
         break
     }
 

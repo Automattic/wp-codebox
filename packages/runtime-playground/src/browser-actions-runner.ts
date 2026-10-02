@@ -29,6 +29,7 @@ import { createBrowserAccessibilityCollector } from "./browser-accessibility-col
 import { browserEnvironmentCell, createPlaywrightBrowserEnvironmentContext, observePlaywrightBrowserEnvironment, resolvePlaywrightBrowserEnvironment, type PlaywrightBrowserEnvironmentSession } from "./browser-environment-matrix.js"
 import { installBrowserTransportFaults, type BrowserTransportFaultReport, type InstalledBrowserTransportFaults } from "./browser-transport-faults.js"
 import { browserPresentationInitScript, validateBrowserPresentation, type BrowserPresentation } from "./browser-presentation.js"
+import { setBrowserAnnotationTheme, type BrowserAnnotationTheme } from "./browser-annotations.js"
 
 export { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
 
@@ -57,6 +58,7 @@ export interface BrowserActionsRunPlan {
   transportFaults?: TransportFaultModel
   reusePage?: boolean
   presentation?: BrowserPresentation
+  annotationTheme?: BrowserAnnotationTheme
 }
 
 interface BrowserRunPlan {
@@ -213,6 +215,7 @@ export async function runBrowserActionsCommand({
       videoRecordingOrigin = performance.now()
       videoStartedWallAt = Date.now()
     }
+    setBrowserAnnotationTheme(runPlan.annotationTheme ?? {})
     environmentRuntime = session?.runtime ?? (needsEnvironmentContext ? await createPlaywrightBrowserEnvironmentContext(browser, resolvedEnvironment, {
       contextOptions: {
         ...topology.contextOptions(),
@@ -865,8 +868,17 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     actionCorpus: browserActionCorpusFromArgs(args),
     adaptiveExploration: adaptiveExplorationPlan.contract,
     presentation: await browserPresentationFromArgs(args),
+    annotationTheme: await browserAnnotationThemeFromArgs(args),
     transportFaults: await transportFaultModelFromArg(args),
   }
+}
+
+async function browserAnnotationThemeFromArgs(args: string[]): Promise<BrowserAnnotationTheme | undefined> {
+  const raw = argValue(args, "annotation-theme-json")
+  if (!raw) return undefined
+  const value: unknown = JSON.parse(raw.startsWith("@") ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw)
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("annotation-theme-json must be an object")
+  return value as BrowserAnnotationTheme
 }
 
 const BROWSER_VIDEO_MAX_PIXELS = 8_294_400
