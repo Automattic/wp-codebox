@@ -393,6 +393,8 @@ export function browserStepRecord(
     ...(typeof step.waitFor === "string" ? { waitFor: step.waitFor } : {}),
     ...(typeof step.fullPage === "boolean" ? { fullPage: step.fullPage } : {}),
     ...(typeof step.duration === "string" ? { duration: step.duration } : {}),
+    ...(typeof step.marker === "string" ? { marker: step.marker } : {}),
+    ...(typeof step.name === "string" ? { name: step.name } : {}),
     ...(outcome.assertion ? { assertion: outcome.assertion } : {}),
     ...(outcome.readiness ? { readiness: outcome.readiness } : {}),
     ...(outcome.target ? { target: outcome.target } : {}),

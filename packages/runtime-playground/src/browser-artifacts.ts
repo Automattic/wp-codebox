@@ -960,6 +960,9 @@ export interface BrowserStepRecord {
   startedAt: string
   finishedAt: string
   durationMs: number
+  videoOffsetMs?: { startMs: number; endMs: number }
+  marker?: string
+  name?: string
   url?: string
   selector?: string
   text?: string

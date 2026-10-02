@@ -46,6 +46,7 @@ export interface BrowserActionsRunPlan {
   totalTimeoutMs: number
   networkSettleTimeoutMs: number
   requestedViewport?: { width: number; height: number }
+  videoSize?: { width: number; height: number }
   requestedEnvironment?: BrowserEnvironment
   authRequest?: { userId: number }
   storageStateImport?: BrowserStorageStateImport
@@ -147,6 +148,11 @@ export async function runBrowserActionsCommand({
   const videoStagingDirectory = artifactSession.absolutePath("video-source")
   let videoRecording: import("playwright").Video | null = null
   let videoSaved = false
+  let videoStartedAt: number | undefined
+  let videoStartedWallAt: number | undefined
+  let videoRecordingOrigin: number | undefined
+  let videoFinishedAt: number | undefined
+  let videoDimensions: { width: number; height: number } | undefined
   const screenshots: string[] = []
   const domSnapshots: Array<{ screenshot: string; snapshot: string; step?: { index: number; name?: string; kind: string }; elementCount: number; capturedElements: number; truncated: boolean }> = []
   const verifierResults: NonNullable<BrowserArtifact["summary"]["verifierResults"]> = []
@@ -201,12 +207,16 @@ export async function runBrowserActionsCommand({
     // A recording is a context-level capability, so asking for video requires the
     // environment context path rather than a bare page.
     const needsEnvironmentContext = Object.keys(requestedEnvironment).length > 0 || browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || !!runPlan.transportFaults || capture.has("video")
+    if (capture.has("video")) {
+      videoRecordingOrigin = performance.now()
+      videoStartedWallAt = Date.now()
+    }
     environmentRuntime = session?.runtime ?? (needsEnvironmentContext ? await createPlaywrightBrowserEnvironmentContext(browser, resolvedEnvironment, {
       contextOptions: {
         ...topology.contextOptions(),
         ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
         ...(runPlan.transportFaults ? { serviceWorkers: "block" as const } : {}),
-        ...(capture.has("video") ? { recordVideo: { dir: videoStagingDirectory } } : {}),
+        ...(capture.has("video") ? { recordVideo: { dir: videoStagingDirectory, ...(browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport, requestedEnvironment.deviceScaleFactor) ? { size: browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport, requestedEnvironment.deviceScaleFactor) } : {}) } } : {}),
       },
     }) : undefined)
     const context = environmentRuntime?.context ?? null
@@ -215,7 +225,11 @@ export async function runBrowserActionsCommand({
     }
     if (context && runPlan.transportFaults) installedTransportFaults = await installBrowserTransportFaults(context, runPlan.transportFaults, { policy: browserPreviewTransportFaultPolicy(networkPolicy, topology.origins.localProxyOrigin), serviceWorkersBlocked: true })
     const page = activePage = environmentRuntime?.page ?? await browser.newPage()
-    if (capture.has("video")) videoRecording = page.video()
+    if (capture.has("video")) {
+      videoRecording = page.video()
+      videoStartedAt = videoRecordingOrigin
+      videoDimensions = browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport, requestedEnvironment.deviceScaleFactor) ?? requestedEnvironment.viewport ?? { width: 1280, height: 720 }
+    }
     navigationTracker = trackBrowserNavigation(page)
     if (onProgress) {
       await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
@@ -265,11 +279,11 @@ export async function runBrowserActionsCommand({
           }, capture.has("video"))
           finalUrl = page.url()
           requestedUrl = resolveBrowserPreviewUrl((navigateStep.url ?? "").trim(), preview.effectiveOrigin)
-          stepRecords.push(browserStepRecord(0, navigateStep, "ok", navigateStartedAt, navigateStartedAtMs, finalUrl, {}))
+          stepRecords.push({ ...browserStepRecord(0, navigateStep, "ok", navigateStartedAt, navigateStartedAtMs, finalUrl, {}), ...(videoStartedAt !== undefined ? { videoOffsetMs: { startMs: Math.max(0, Math.round(navigateStartedAtMs - videoStartedWallAt!)), endMs: Math.max(0, Math.round(performance.now() - videoStartedAt)) } } : {}) })
         } catch (error) {
           const serialized = serializeBrowserError("probe-error", error)
           errors.push(serialized)
-          stepRecords.push(browserStepRecord(0, navigateStep, "failed", navigateStartedAt, navigateStartedAtMs, page.url(), { error: serialized }))
+          stepRecords.push({ ...browserStepRecord(0, navigateStep, "failed", navigateStartedAt, navigateStartedAtMs, page.url(), { error: serialized }), ...(videoStartedAt !== undefined ? { videoOffsetMs: { startMs: Math.max(0, Math.round(navigateStartedAtMs - videoStartedWallAt!)), endMs: Math.max(0, Math.round(performance.now() - videoStartedAt)) } } : {}) })
           throw error
         }
       }
@@ -366,12 +380,13 @@ export async function runBrowserActionsCommand({
       const index = loopIndex + stepIndexOffset
       const recordStartedAt = now()
       const recordStartedAtMs = Date.now()
+      const videoOffsetStartedAt = videoStartedAt === undefined ? undefined : Math.max(0, Math.round(performance.now() - videoStartedAt))
       // Total-script timeout: stop before starting a step that would exceed the budget.
       if (totalTimeoutMs > 0 && recordStartedAtMs - startedAtMs >= totalTimeoutMs) {
         const timeoutError = new Error(`wordpress.browser-actions exceeded total timeout of ${totalTimeoutMs}ms before step ${index} (${step.kind})`)
         const serialized = serializeBrowserError("probe-error", timeoutError)
         errors.push(serialized)
-        stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { error: serialized }))
+        stepRecords.push({ ...browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { error: serialized }), ...(videoOffsetStartedAt !== undefined ? { videoOffsetMs: { startMs: videoOffsetStartedAt, endMs: Math.max(videoOffsetStartedAt, Math.round(performance.now() - videoStartedAt!)) } } : {}) })
         pendingError = timeoutError
         break
       }
@@ -383,12 +398,12 @@ export async function runBrowserActionsCommand({
           const artifactPath = artifactSession.path(fileName)
           verifierResults.push({ step: result.step, status: result.status, artifact: artifactPath })
           if (result.status === "ok") {
-            stepRecords.push(browserStepRecord(index, step, "ok", recordStartedAt, recordStartedAtMs, page.url(), { verifierResult: artifactPath }))
+            stepRecords.push({ ...browserStepRecord(index, step, "ok", recordStartedAt, recordStartedAtMs, page.url(), { verifierResult: artifactPath }), ...(videoOffsetStartedAt !== undefined ? { videoOffsetMs: { startMs: videoOffsetStartedAt, endMs: Math.max(videoOffsetStartedAt, Math.round(performance.now() - videoStartedAt!)) } } : {}) })
             continue
           }
           const serialized = serializeBrowserError("probe-error", new Error(result.error?.message ?? "wordpress.browser-actions callTool verifier failed"))
           errors.push(serialized)
-          stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { verifierResult: artifactPath, error: serialized }))
+          stepRecords.push({ ...browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { verifierResult: artifactPath, error: serialized }), ...(videoOffsetStartedAt !== undefined ? { videoOffsetMs: { startMs: videoOffsetStartedAt, endMs: Math.max(videoOffsetStartedAt, Math.round(performance.now() - videoStartedAt!)) } } : {}) })
           pendingError = new Error(result.error?.message ?? "wordpress.browser-actions callTool verifier failed")
           break
         }
@@ -426,15 +441,15 @@ export async function runBrowserActionsCommand({
         }
         // A failed expect/evaluate assertion is a clean step failure: no silent partial success.
         if (outcome.assertion && !outcome.assertion.passed) {
-          stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, finalUrl, outcome))
+          stepRecords.push({ ...browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, finalUrl, outcome), ...(videoOffsetStartedAt !== undefined ? { videoOffsetMs: { startMs: videoOffsetStartedAt, endMs: Math.max(videoOffsetStartedAt, Math.round(performance.now() - videoStartedAt!)) } } : {}) })
           pendingError = new Error(`wordpress.browser-actions ${step.kind} assertion failed at step ${index}`)
           break
         }
-        stepRecords.push(browserStepRecord(index, step, "ok", recordStartedAt, recordStartedAtMs, finalUrl, outcome))
+        stepRecords.push({ ...browserStepRecord(index, step, "ok", recordStartedAt, recordStartedAtMs, finalUrl, outcome), ...(videoOffsetStartedAt !== undefined ? { videoOffsetMs: { startMs: videoOffsetStartedAt, endMs: Math.max(videoOffsetStartedAt, Math.round(performance.now() - videoStartedAt!)) } } : {}) })
       } catch (error) {
         const serialized = serializeBrowserError("probe-error", error)
         errors.push(serialized)
-        stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { error: serialized }))
+        stepRecords.push({ ...browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { error: serialized }), ...(videoOffsetStartedAt !== undefined ? { videoOffsetMs: { startMs: videoOffsetStartedAt, endMs: Math.max(videoOffsetStartedAt, Math.round(performance.now() - videoStartedAt!)) } } : {}) })
         pendingError ??= error instanceof Error ? error : new Error(String(error))
         if (isBrowserCommandLivenessError(pendingError)) {
           await page.close().catch(() => undefined)
@@ -545,6 +560,7 @@ export async function runBrowserActionsCommand({
       // recording is adopted from its staging directory rather than through
       // video.saveAs(), which requires a browser connection that cleanup has closed.
       try {
+        videoFinishedAt = performance.now()
         const staged = (await readdir(videoStagingDirectory)).filter((entry) => entry.endsWith(".webm")).sort()
         if (staged.length === 0) throw new Error("wordpress.browser-actions capture=video produced no recording")
         const source = join(videoStagingDirectory, staged[0])
@@ -597,6 +613,18 @@ export async function runBrowserActionsCommand({
     const wordpressDiagnosticsSummary = wordpressDiagnostics?.summary
 
     const assertions = browserAssertionsSummary(stepRecords)
+    const videoMarkers = stepRecords.flatMap((record) => {
+      if (!record.videoOffsetMs) return []
+      const markerName = record.kind === "screenshot" ? record.name ?? record.marker : record.marker
+      return (record.kind === "screenshot" && typeof record.name === "string" && record.name.length > 0) || record.marker ? [{ index: record.index, kind: record.kind, ...(markerName ? { name: markerName } : {}), ...record.videoOffsetMs }] : []
+    })
+    const videoSummary = capture.has("video") ? {
+      path: "files/browser/video.webm",
+      width: videoDimensions?.width ?? 0,
+      height: videoDimensions?.height ?? 0,
+      durationMs: Math.max(0, Math.round((videoFinishedAt ?? performance.now()) - (videoStartedAt ?? performance.now()))),
+      markers: videoMarkers,
+    } : undefined
     artifact = {
       artifactType: "actions",
       requestedUrl,
@@ -664,6 +692,7 @@ export async function runBrowserActionsCommand({
       totalTimeoutMs,
       networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs,
       steps: stepRecords,
+      ...(videoSummary ? { video: videoSummary } : {}),
       ...(assertions.total > 0 ? { assertions } : {}),
       startedAt,
       finishedAt: now(),
@@ -825,6 +854,7 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     totalTimeoutMs: durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS),
     networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
     requestedViewport: viewportArg(args, "viewport"),
+    videoSize: browserVideoSizeArg(args),
     requestedEnvironment: adaptiveExplorationPlan.requestedEnvironment,
     authRequest: browserAuthRequest(args),
     storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-actions", artifactRoot),
@@ -833,6 +863,27 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     adaptiveExploration: adaptiveExplorationPlan.contract,
     transportFaults: await transportFaultModelFromArg(args),
   }
+}
+
+const BROWSER_VIDEO_MAX_PIXELS = 8_294_400
+
+function browserVideoSizeArg(args: string[]): { width: number; height: number } | undefined {
+  const raw = argValue(args, "video-size")?.trim()
+  if (!raw) return undefined
+  const match = /^(\d+)x(\d+)$/i.exec(raw)
+  if (!match) throw new Error("wordpress.browser-actions video-size must be <width>x<height>")
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) throw new Error("wordpress.browser-actions video-size dimensions must be positive integers")
+  return browserVideoSize({ width, height }, undefined, 1)
+}
+
+function browserVideoSize(explicit: { width: number; height: number } | undefined, viewport: { width: number; height: number } | undefined, scale = 1): { width: number; height: number } | undefined {
+  const requested = explicit ?? (viewport && scale > 1 ? { width: Math.round(viewport.width * scale), height: Math.round(viewport.height * scale) } : undefined)
+  if (!requested) return undefined
+  const size = requested
+  const factor = Math.min(1, Math.sqrt(BROWSER_VIDEO_MAX_PIXELS / (size.width * size.height)))
+  return { width: Math.max(1, Math.floor(size.width * factor)), height: Math.max(1, Math.floor(size.height * factor)) }
 }
 
 async function browserEnvironmentFromArgs(args: string[]): Promise<BrowserEnvironment> {

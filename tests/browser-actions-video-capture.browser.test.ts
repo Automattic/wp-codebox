@@ -22,9 +22,12 @@ test("browser actions capture=video records the session and adopts it as a named
       plan: {
         steps: [
           { kind: "navigate", url: fixture.url, waitFor: "load" },
-          { kind: "click", selector: "#target" },
+          { kind: "click", selector: "#target", marker: "button pressed" },
+          { kind: "screenshot", name: "after-action" },
         ],
         capture: new Set(["steps", "video"]),
+        requestedEnvironment: { viewport: { width: 430, height: 932 }, deviceScaleFactor: 2 },
+        videoSize: { width: 860, height: 1864 },
         stepTimeoutMs: 2_000,
         totalTimeoutMs: 10_000,
         networkSettleTimeoutMs: 100,
@@ -38,6 +41,12 @@ test("browser actions capture=video records the session and adopts it as a named
     const recorded = await stat(recording)
     assert(recorded.isFile(), "the recording must be adopted as video.webm")
     assert(recorded.size > 0, "the recording must not be empty")
+    const summary = JSON.parse(await readFile(join(artifactRoot, "files/browser/action-summary.json"), "utf8"))
+    assert.deepEqual({ width: summary.video.width, height: summary.video.height }, { width: 860, height: 1864 })
+    assert.deepEqual(summary.video.markers.map((marker: { index: number; name: string }) => [marker.index, marker.name]), [[1, "button pressed"], [2, "after-action"]])
+    assert(summary.video.markers.every((marker: { startMs: number; endMs: number }, index: number, markers: Array<{ startMs: number }>) => marker.startMs >= 0 && marker.endMs >= marker.startMs && (index === 0 || marker.startMs >= markers[index - 1]!.startMs)))
+    const records = (await readFile(join(artifactRoot, "files/browser/steps.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line))
+    assert(records.every((record) => record.videoOffsetMs && record.videoOffsetMs.endMs >= record.videoOffsetMs.startMs))
   } finally {
     await rm(artifactRoot, { recursive: true, force: true })
     await fixture.close()
@@ -68,6 +77,34 @@ test("screenshot steps during video capture default to viewport-sized captures",
     assert.equal(screenshot.readUInt32BE(20), 932, "screenshot height should remain the configured viewport, not the document height")
     const records = (await readFile(join(artifactRoot, "files/browser/steps.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line))
     assert.equal(records[1].fullPage, undefined, "the step record omits an unspecified option")
+  } finally {
+    await rm(artifactRoot, { recursive: true, force: true })
+    await fixture.close()
+  }
+})
+
+test("browser actions scales video dimensions from a high-density viewport by default", async () => {
+  const fixture = await pageFixture()
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-video-"))
+  try {
+    await runBrowserActionsCommand({
+      artifactRoot,
+      runtimeSpec,
+      server: fixture.server,
+      spec: { command: "wordpress.browser-actions", args: [] },
+      plan: {
+        steps: [{ kind: "navigate", url: fixture.url, waitFor: "load" }],
+        capture: new Set(["steps", "video"]),
+        requestedEnvironment: { viewport: { width: 430, height: 932 }, deviceScaleFactor: 2.5 },
+        stepTimeoutMs: 2_000,
+        totalTimeoutMs: 10_000,
+        networkSettleTimeoutMs: 100,
+        maxDomSnapshotElements: 20,
+      },
+    })
+
+    const summary = JSON.parse(await readFile(join(artifactRoot, "files/browser/action-summary.json"), "utf8"))
+    assert.deepEqual({ width: summary.video.width, height: summary.video.height }, { width: 1075, height: 2330 })
   } finally {
     await rm(artifactRoot, { recursive: true, force: true })
     await fixture.close()

@@ -82,6 +82,8 @@ export interface BrowserInteractionStep {
   state?: BrowserInteractionExpectState
   /** Optional screenshot name for `screenshot`; screenshot steps may also use waitFor for painted-readiness waits before capture. */
   name?: string
+  /** Optional free-form video timeline marker label. */
+  marker?: string
   /** Optional iframe selector for `screenshot`; captures the iframe document instead of the top page. */
   frameSelector?: string
   /** Optional iframe URL fragment for `screenshot`; captures the matching iframe document instead of the top page. */
@@ -269,6 +271,9 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
     }
 
     const step = raw as unknown as BrowserInteractionStep
+    if (step.marker !== undefined && (typeof step.marker !== "string" || step.marker.trim().length === 0)) {
+      issues.push({ index, message: "step marker must be a non-empty string" })
+    }
     const hasSelector = typeof step.selector === "string" && step.selector.length > 0
     const hasText = typeof step.text === "string" && step.text.length > 0
 
