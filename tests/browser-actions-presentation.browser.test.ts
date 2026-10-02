@@ -26,6 +26,8 @@ test("presentation overlay survives navigation without intercepting clicks and s
     })
     assert.equal(overlay.exists, true)
     assert.equal(overlay.hit, false)
+    assert.match(browserPresentationInitScript({ pointer: { enabled: true } }), /visibility:hidden/)
+    assert.match(browserPresentationInitScript({ pointer: { enabled: true } }), /cursor\.style\.visibility='visible'/)
     await executeBrowserInteractionStep(page, { kind: "scroll", selector: "#target", behavior: "smooth" }, page.url(), 3_000, async () => ({ path: "unused", isDefault: false }))
     const visible = await page.locator("#target").evaluate(element => {
       const rect = element.getBoundingClientRect()

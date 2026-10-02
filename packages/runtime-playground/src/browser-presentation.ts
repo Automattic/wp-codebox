@@ -17,13 +17,13 @@ export function browserPresentationInitScript(presentation: BrowserPresentation)
       const cursor = document.createElement('div');
       const pointer = config.pointer || {};
       const size = Number(pointer.size) || 20;
-      cursor.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;transform:translate(-2px,-2px);display:' + (pointer.enabled === false ? 'none' : 'block') + ';';
+      cursor.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;transform:translate(-2px,-2px);visibility:hidden;display:' + (pointer.enabled === false ? 'none' : 'block') + ';';
       if (pointer.style === 'dot') cursor.style.cssText += 'width:'+size+'px;height:'+size+'px;border-radius:50%;background:'+(pointer.color||'#e11d48')+';';
       else if (pointer.style === 'touch') cursor.style.cssText += 'width:'+size+'px;height:'+size+'px;border:2px solid '+(pointer.color||'#e11d48')+';border-radius:50%;';
       else cursor.innerHTML = '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24"><path fill="'+(pointer.color||'#111')+'" stroke="white" d="M3 2l7 19 3-7 7-3z"/></svg>';
       shadow.append(cursor);
       document.documentElement.append(host);
-      window.addEventListener('mousemove', event => { cursor.style.left=event.clientX+'px'; cursor.style.top=event.clientY+'px'; }, true);
+      window.addEventListener('mousemove', event => { cursor.style.left=event.clientX+'px'; cursor.style.top=event.clientY+'px'; cursor.style.visibility='visible'; }, true);
       window.addEventListener('click', event => {
         if (!config.clickFeedback) return;
         const ring=document.createElement('div'); ring.style.cssText='position:fixed;left:'+event.clientX+'px;top:'+event.clientY+'px;width:12px;height:12px;border:2px solid '+(pointer.color||'#e11d48')+';border-radius:50%;transform:translate(-50%,-50%);animation:presentation-ripple .55s ease-out forwards';

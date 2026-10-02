@@ -4,7 +4,9 @@ import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
+import { chromium } from "playwright"
 import { validateBrowserInteractionScript } from "../packages/runtime-core/src/browser-interaction.js"
+import { executeBrowserAnnotation } from "../packages/runtime-playground/src/browser-annotations.js"
 import { runBrowserActionsCommand } from "../packages/runtime-playground/src/browser-actions-runner.js"
 import { wordpressRuntimeSpec } from "../scripts/test-kit.js"
 
@@ -40,4 +42,34 @@ test("annotation renders in isolated overlay, follows scrolling, passes clicks, 
     assert.equal(records[4].status, "ok", "target scroll should complete while annotation is active")
     assert.equal(records[5].status, "ok", "annotation should clear by id")
   } finally { await rm(artifactRoot, { recursive: true, force: true }); await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())) }
+})
+
+test("arrows point to the target edge and labels avoid adjacent controls", async () => {
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage({ viewport: { width: 600, height: 400 } })
+  try {
+    await page.setContent('<button id="above" style="position:absolute;left:200px;top:80px">Above</button><button id="target" style="position:absolute;left:200px;top:150px;width:120px;height:40px">Target</button><button id="below" style="position:absolute;left:200px;top:230px">Below</button>')
+    for (const direction of ["left", "right", "top", "bottom"]) {
+      await executeBrowserAnnotation(page, { kind: "annotate", id: direction, shape: "arrow", selector: "#target", direction } as never)
+      const error = await page.evaluate((id) => {
+        const target = document.querySelector("#target")!.getBoundingClientRect()
+        const node = document.querySelector("#__wp_codebox_annotations")!.shadowRoot!.querySelector(`[data-annotation-id="${id}"]`)!
+        const path = node.querySelector("path")!
+        const match = path.getAttribute("d")!.match(/M ([\d.]+) ([\d.]+) L ([\d.]+) ([\d.]+)/)!
+        const bounds = node.getBoundingClientRect()
+        const x = bounds.left + Number(match[3]), y = bounds.top + Number(match[4])
+        return Math.min(Math.abs(x - target.left), Math.abs(x - target.right), Math.abs(y - target.top), Math.abs(y - target.bottom))
+      }, direction)
+      assert.ok(error <= 1, `${direction} arrow tip should land on the target edge`)
+    }
+    await executeBrowserAnnotation(page, { kind: "annotate", id: "label", shape: "label", text: "Continue", anchor: { selector: "#target", placement: "top" } } as never)
+    const overlap = await page.evaluate(() => {
+      const label = document.querySelector("#__wp_codebox_annotations")!.shadowRoot!.querySelector('[data-annotation-id="label"]')!.getBoundingClientRect()
+      return ["#above", "#target", "#below"].some(selector => {
+        const box = document.querySelector(selector)!.getBoundingClientRect()
+        return label.left < box.right && label.right > box.left && label.top < box.bottom && label.bottom > box.top
+      })
+    })
+    assert.equal(overlap, false)
+  } finally { await browser.close() }
 })
