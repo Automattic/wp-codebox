@@ -1470,6 +1470,8 @@ WP Codebox does not own:
 - Define reviewed apply-back adapters for bot-authored PRs, direct apply, and package export.
 - Add visual previews, parsed test command output, and richer risk flags to frontend review payloads.
 
+`navigate-host=<hosts>` explicitly permits top-level navigation to the listed external hosts for `wordpress.browser-probe`, `wordpress.browser-actions`, and `wordpress.browser-scenario`. It is separate from `allow-host`: navigability does not grant access to other network requests, and redirects to unlisted external hosts remain blocked. The network-policy summary records the navigable host list. `allow-host` continues to grant network access under the network policy but does not by itself permit external top-level navigation.
+
 ## Development Notes
 
 - Keep the runtime contract consumer-agnostic. Parent control planes and mounted tools consume WP Codebox; they do not own the core artifact contract.

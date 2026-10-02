@@ -106,6 +106,13 @@ const snapshotScopingAcceptedArgs: CommandDefinition["acceptedArgs"] = [
 const browserActionCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"] as const
 const browserScenarioCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot", "dom-snapshot"] as const
 const browserActionEnvironmentAcceptedArgs: CommandDefinition["acceptedArgs"] = [
+  { name: "route-host", description: "Preview host alias routed to the local Playground preview.", repeatable: true, format: "hostname" },
+  { name: "allow-host", description: "External host allowed by the browser preview network policy.", repeatable: true, format: "hostname" },
+  { name: "navigate-host", description: "External host allowed for top-level browser navigation only.", repeatable: true, format: "hostname" },
+  { name: "block-host", description: "External host explicitly blocked by the browser preview network policy.", repeatable: true, format: "hostname" },
+  { name: "record-external", description: "Record external network requests as policy evidence.", format: "boolean" },
+  { name: "preview-mode", description: "Preview origin mode used for browser routing.", format: "local|public|secure" },
+  { name: "network-policy", description: "Browser preview network policy mode.", format: "record|allow|block" },
   { name: "browser-environment-json", description: "Optional browser environment object applied when the action context is created. Supports the public BrowserEnvironment fields and @<path> JSON.", format: "JSON object or @path" },
   { name: "device", description: "Optional built-in Playwright device profile applied when the action context is created.", format: "Playwright device name, e.g. Pixel 5" },
   { name: "user-agent", description: "Optional browser context user agent override.", format: "string" },
@@ -1193,6 +1200,7 @@ export const commandRegistry = [
       { name: "capture", description: "Comma-separated artifacts to capture; defaults to html,console,errors,network. Use capture=html alone for a deterministic rendered-DOM snapshot with no rasterization (no screenshot).", format: "console,errors,html,network,performance,memory,screenshot" },
       { name: "network-policy", description: "Browser preview network policy mode. Use block to abort external (non-preview-origin) requests so the captured rendered DOM is self-contained and deterministic (e.g. for static visual-parity capture).", format: "record|allow|block" },
       { name: "allow-host", description: "External host allowed past a blocking browser preview network policy.", repeatable: true, format: "hostname" },
+      { name: "navigate-host", description: "External host allowed for top-level navigation only; network access remains governed separately.", repeatable: true, format: "hostname" },
       { name: "block-host", description: "External host explicitly blocked by the browser preview network policy.", repeatable: true, format: "hostname" },
     ],
     outputShape: "JSON summary plus files/browser/snapshot.html, console.jsonl, errors.jsonl, network.jsonl, and summary.json by default; optional screenshot/performance/memory artifacts when requested.",

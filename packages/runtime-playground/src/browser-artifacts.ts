@@ -638,6 +638,7 @@ export interface BrowserProbePreviewDiagnostic {
 export interface BrowserProbeNetworkPolicySummary {
   mode: "allow" | "block" | "record"
   allowHosts: string[]
+  navigateHosts: string[]
   blockHosts: string[]
   routeHosts: string[]
   recordExternal: boolean
