@@ -117,4 +117,17 @@ await withTempDir("wp-codebox-recipe-browser-payload-files-", async (recipeDirec
   }
 })
 
+await withTempDir("wp-codebox-recipe-validation-capture-", async (recipeDirectory) => {
+  // Every capture the browser-actions runner accepts must also pass recipe
+  // validation, or recipe-driven runs (e.g. video recordings) are rejected
+  // before they start.
+  const runnerCaptures = ["steps", "console", "errors", "html", "network", "websocket", "screenshot", "dom-snapshot", "video"]
+  const recipe: WorkspaceRecipe = {
+    schema: "wp-codebox/workspace-recipe/v1",
+    workflow: { steps: [{ command: "wordpress.browser-actions", args: ["url=/", `capture=${runnerCaptures.join(",")}`] }] },
+  }
+  const issues = await validateWorkspaceRecipeSemantics(recipe, join(recipeDirectory, "recipe.json"))
+  assert.deepEqual(issues.filter(({ code }) => code === "invalid-capture"), [])
+})
+
 console.log("recipe validation descriptors ok")

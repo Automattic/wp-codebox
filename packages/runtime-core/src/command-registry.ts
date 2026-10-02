@@ -103,7 +103,7 @@ const snapshotScopingAcceptedArgs: CommandDefinition["acceptedArgs"] = [
   { name: "snapshot-post-types", description: "Comma-separated post types used to scope posts and postmeta table exports.", format: "string" },
 ]
 
-const browserActionCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"] as const
+export const browserActionCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "websocket", "screenshot", "dom-snapshot", "video"] as const
 const browserScenarioCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot", "dom-snapshot"] as const
 const browserActionEnvironmentAcceptedArgs: CommandDefinition["acceptedArgs"] = [
   { name: "route-host", description: "Preview host alias routed to the local Playground preview.", repeatable: true, format: "hostname" },
