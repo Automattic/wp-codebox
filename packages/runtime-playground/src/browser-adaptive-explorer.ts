@@ -586,7 +586,8 @@ function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], netwo
   const failures = networkRecords.map((record) => record as Record<string, unknown>).filter((record) => record.type === "requestfailed")
   const classifiedFailures = failures.map((record): BrowserAdaptiveNetworkFailure & { expectedBlock: boolean } => {
     const url = typeof record.url === "string" ? record.url : ""
-    const decision = networkPolicy ? browserPreviewNetworkDecision(url, networkPolicy) : { url, urlClassification: "invalid" as const, policyDecision: "unknown" as const, policyReason: "network-policy-unavailable" }
+    const resourceType = typeof record.resourceType === "string" ? record.resourceType : "document"
+    const decision = networkPolicy ? browserPreviewNetworkDecision(url, networkPolicy, resourceType) : { url, urlClassification: "invalid" as const, policyDecision: "unknown" as const, policyReason: "network-policy-unavailable" }
     const failure = networkFailureMessage(record)
     const expectedBlock = decision.policyDecision === "blocked" && /ERR_BLOCKED_BY_CLIENT|blockedbyclient/i.test(failure)
     return { ...decision, ...(failure ? { failure } : {}), oracleFinding: !expectedBlock || contract.oraclePolicy.policyBlocks === "finding", expectedBlock }

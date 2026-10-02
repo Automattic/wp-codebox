@@ -7,7 +7,7 @@ import type { BrowserContext, Request, Response, Route } from "playwright"
 
 import { BrowserArtifactSession } from "../packages/runtime-playground/src/browser-artifact-session.js"
 import { serializeBrowserError, serializeBrowserRequestFailure, serializeBrowserResponse } from "../packages/runtime-playground/src/browser-metrics.js"
-import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicy, browserPreviewRouting, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, isBrowserPreviewRouteClosedError, isBrowserPreviewRouteFetchContentDecodingError, isBrowserPreviewRouteFetchRecoverableError, isBrowserPreviewRouteFetchRequestContextDisposedError, isBrowserPreviewRouteFetchTransientTransportError, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
+import { browserPreviewCleanupErrorIsFatal, browserPreviewNavigationScope, browserPreviewNetworkDecision, browserPreviewNetworkPolicy, browserPreviewNetworkPolicySummary, browserPreviewRouting, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, isBrowserPreviewRouteClosedError, isBrowserPreviewRouteFetchContentDecodingError, isBrowserPreviewRouteFetchRecoverableError, isBrowserPreviewRouteFetchRequestContextDisposedError, isBrowserPreviewRouteFetchTransientTransportError, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
 import { BrowserProbeSessionResultBuilder, type BrowserProbeSessionResultInput } from "../packages/runtime-playground/src/browser-probe-session-result-builder.js"
 import { createBrowserProbeProgressTracker } from "../packages/runtime-playground/src/browser-probe-support.js"
 import { withTempDir } from "../scripts/test-kit.js"
@@ -23,6 +23,32 @@ test("routed fetch classifiers include transport resets and preserve disposal/de
   assert.equal(isBrowserPreviewRouteFetchContentDecodingError(routeFetchError("failed to decompress 'br' encoding")), true)
   assert.equal(isBrowserPreviewRouteFetchRecoverableError(routeFetchError("read ECONNRESET")), true)
   assert.equal(isBrowserPreviewRouteClosedError(new Error("route.continue: Target page, context or browser has been closed")), true)
+})
+
+test("navigation grants allow only declared external documents and appear in evidence", async () => {
+  const preview = browserPreviewRouting([], undefined, "http://127.0.0.1:9400")
+  const defaultPolicy = browserPreviewNetworkPolicy([], [], preview)
+  const defaultRoute = await routedFixture("document", [], undefined, { url: "https://events.example.test/" })
+  await defaultRoute.run()
+  assert.equal(defaultRoute.abortCalls(), 1)
+
+  const policy = browserPreviewNetworkPolicy(["navigate-host=events.example.test", "network-policy=block"], [], preview)
+  const scope = browserPreviewNavigationScope(preview.effectiveOrigin, policy)
+  assert.equal(scope.resolve("https://events.example.test/", preview.effectiveOrigin).reason, "declared-navigation-host")
+  assert.equal(scope.resolve("https://other.example.test/", preview.effectiveOrigin).allowed, false)
+  assert.equal(scope.resolve("https://other.example.test/escape", "https://events.example.test/").allowed, false)
+  assert.equal(browserPreviewNetworkDecision("https://events.example.test/", policy).policyDecision, "allowed")
+  assert.deepEqual(browserPreviewNetworkPolicySummary(policy).navigateHosts, ["events.example.test"])
+
+  const allowedRoute = await routedFixture("document", [], undefined, { url: "https://events.example.test/", policyArgs: ["navigate-host=events.example.test", "network-policy=block"] })
+  await allowedRoute.run()
+  assert.equal(allowedRoute.abortCalls(), 0)
+  assert.equal(allowedRoute.continueCalls(), 1)
+
+  const unlistedRoute = await routedFixture("document", [], undefined, { url: "https://other.example.test/", policyArgs: ["navigate-host=events.example.test"] })
+  await unlistedRoute.run()
+  assert.equal(unlistedRoute.abortCalls(), 1)
+  assert.equal(defaultPolicy.navigateHosts.size, 0)
 })
 
 test("subresource resets retry once, abort safely, and never reject the route callback", async () => {
@@ -302,6 +328,7 @@ async function routedFixture(resourceType: string, outcomes: unknown[], tracker 
     },
     fetchCalls: () => fetchCalls,
     abortCalls: () => abortCalls,
+    continueCalls: () => continueCalls,
     fulfilledResponse: () => fulfilled,
   }
 }

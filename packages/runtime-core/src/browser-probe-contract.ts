@@ -99,6 +99,7 @@ export const BROWSER_PROBE_ACCEPTED_ARGS: BrowserProbeAcceptedArg[] = [
   { name: "route-host", description: "Preview host alias routed to the local Playground preview.", repeatable: true, format: "hostname" },
   { name: "route-host-drain", description: "Whether pending routed requests must drain before the command succeeds. Use advisory for pages with long-lived routed requests that should be recorded but not fail evidence capture.", format: "required|advisory" },
   { name: "allow-host", description: "External host allowed by the browser preview network policy.", repeatable: true, format: "hostname" },
+  { name: "navigate-host", description: "External host explicitly allowed for top-level browser navigation; does not allow its other network requests.", repeatable: true, format: "hostname" },
   { name: "block-host", description: "External host blocked by the browser preview network policy.", repeatable: true, format: "hostname" },
   { name: "record-external", description: "Record external network requests as policy evidence.", format: "boolean" },
   { name: "preview-mode", description: "Preview origin mode used for browser routing.", format: "local|public" },

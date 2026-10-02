@@ -12,6 +12,7 @@ const BROWSER_PREVIEW_ROUTE_RETRY_DELAY_MS = 25
 export interface BrowserPreviewNetworkPolicy {
   mode: "allow" | "block" | "record"
   allowHosts: Set<string>
+  navigateHosts: Set<string>
   blockHosts: Set<string>
   routeHosts: Set<string>
   routeOrigins: Set<string>
@@ -162,6 +163,9 @@ export function browserPreviewNavigationScope(effectivePreviewOrigin: string, po
       if (policy.routeOrigins.has(rawOrigin)) {
         return { allowed: true, rawOrigin, effectiveOrigin, routeDecision: "routed-preview", reason: "internal-runtime-origin" }
       }
+      if (policy.navigateHosts.has(normalizeBrowserPreviewHost(resolved.hostname))) {
+        return { allowed: true, rawOrigin, effectiveOrigin: rawOrigin, routeDecision: "external", reason: "declared-navigation-host" }
+      }
       return { allowed: false, rawOrigin, effectiveOrigin: rawOrigin, routeDecision: "external", reason: policy.allowHosts.has(normalizeBrowserPreviewHost(resolved.hostname)) ? "network-host-allowed-but-not-routed" : "host-not-routed-to-preview" }
     },
     drainDiagnostics() {
@@ -265,6 +269,7 @@ export function browserPreviewAuthCookieUrls(localPreviewOrigin: string, routedH
 export function browserPreviewNetworkPolicy(args: string[], routeHosts: string[], preview: BrowserProbePreviewRouting, routeOrigins: string[] = []): BrowserPreviewNetworkPolicy {
   const mode = browserPreviewNetworkPolicyMode(args)
   const allowHosts = new Set(commaListArg(args, "allow-host").map(normalizeBrowserPreviewHost).filter(Boolean))
+  const navigateHosts = new Set(commaListArg(args, "navigate-host").map(normalizeBrowserPreviewHost).filter(Boolean))
   const blockHosts = new Set(commaListArg(args, "block-host").map(normalizeBrowserPreviewHost).filter(Boolean))
   const routedHosts = new Set(routeHosts.map(normalizeBrowserPreviewHost).filter(Boolean))
   const firstPartyHosts = new Set<string>()
@@ -278,6 +283,7 @@ export function browserPreviewNetworkPolicy(args: string[], routeHosts: string[]
   return {
     mode,
     allowHosts,
+    navigateHosts,
     blockHosts,
     routeHosts: routedHosts,
     routeOrigins: new Set(routeOrigins),
@@ -290,11 +296,11 @@ export function browserPreviewNetworkPolicy(args: string[], routeHosts: string[]
 }
 
 export function browserPreviewNetworkPolicyIsActive(policy: BrowserPreviewNetworkPolicy): boolean {
-  return policy.mode !== "record" || policy.allowHosts.size > 0 || policy.blockHosts.size > 0 || policy.routeHosts.size > 0 || policy.recordExternal
+  return policy.mode !== "record" || policy.allowHosts.size > 0 || policy.navigateHosts.size > 0 || policy.blockHosts.size > 0 || policy.routeHosts.size > 0 || policy.recordExternal
 }
 
 export function browserPreviewNeedsContextRouting(policy: BrowserPreviewNetworkPolicy): boolean {
-  return policy.mode === "block" || policy.blockHosts.size > 0 || policy.routeHosts.size > 0 || policy.routeOrigins.size > 0 || policy.recordExternal
+  return policy.mode === "block" || policy.blockHosts.size > 0 || policy.navigateHosts.size > 0 || policy.routeHosts.size > 0 || policy.routeOrigins.size > 0 || policy.recordExternal
 }
 
 export function browserPreviewNetworkPolicySummary(policy: BrowserPreviewNetworkPolicy): BrowserProbeNetworkPolicySummary {
@@ -302,6 +308,7 @@ export function browserPreviewNetworkPolicySummary(policy: BrowserPreviewNetwork
   return {
     mode: policy.mode,
     allowHosts: [...policy.allowHosts].sort(),
+    navigateHosts: [...policy.navigateHosts].sort(),
     blockHosts: [...policy.blockHosts].sort(),
     routeHosts: [...policy.routeHosts].sort(),
     recordExternal: policy.recordExternal,
@@ -311,7 +318,7 @@ export function browserPreviewNetworkPolicySummary(policy: BrowserPreviewNetwork
   }
 }
 
-export function browserPreviewNetworkDecision(url: string, policy: BrowserPreviewNetworkPolicy): BrowserPreviewNetworkDecision {
+export function browserPreviewNetworkDecision(url: string, policy: BrowserPreviewNetworkPolicy, resourceType = "document"): BrowserPreviewNetworkDecision {
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -322,6 +329,7 @@ export function browserPreviewNetworkDecision(url: string, policy: BrowserPrevie
   const external = !policy.firstPartyHosts.has(host)
   const evidence = { url, host, urlClassification: external ? "external" as const : "same-origin" as const }
   if (policy.blockHosts.has(host)) return { ...evidence, policyDecision: "blocked", policyReason: "declared-block-host" }
+  if (resourceType === "document" && policy.navigateHosts.has(host)) return { ...evidence, policyDecision: "allowed", policyReason: "declared-navigation-host" }
   if (policy.mode === "block" && external && !policy.allowHosts.has(host)) return { ...evidence, policyDecision: "blocked", policyReason: "external-host-blocked-by-policy" }
   if (policy.allowHosts.has(host)) return { ...evidence, policyDecision: "allowed", policyReason: "declared-allow-host" }
   if (!external) return { ...evidence, policyDecision: "allowed", policyReason: "first-party-host" }
@@ -519,14 +527,15 @@ async function handleBrowserPreviewRoute(route: Route, policy: BrowserPreviewNet
     return
   }
 
-  if (policy.preserveRoutedOrigin || (policy.mode === "block" && stat.external && !policy.allowHosts.has(host)) || (request.resourceType() === "document" && stat.external)) {
+  const explicitlyNavigableDocument = request.resourceType() === "document" && policy.navigateHosts.has(host)
+  if ((policy.preserveRoutedOrigin && !explicitlyNavigableDocument) || (policy.mode === "block" && stat.external && !policy.allowHosts.has(host) && !explicitlyNavigableDocument) || (request.resourceType() === "document" && stat.external && !explicitlyNavigableDocument)) {
     stat.blocked += 1
     setOperation("abort-policy-block")
     await route.abort("blockedbyclient")
     return
   }
 
-  setOperation("continue-unrouted")
+  setOperation(explicitlyNavigableDocument ? "continue-declared-navigation-host" : "continue-unrouted")
   await route.continue()
 }
 
@@ -569,7 +578,8 @@ function browserPreviewRouteIsBlocked(requestUrl: URL, resourceType: string, pol
   if (policy.blockHosts.has(host)) return true
   const routed = policy.routeOrigins.has(requestUrl.origin) || policy.routeHosts.has(host)
   const external = !policy.firstPartyHosts.has(host)
-  return !routed && (policy.preserveRoutedOrigin || (policy.mode === "block" && external && !policy.allowHosts.has(host)) || (resourceType === "document" && external))
+  const explicitlyNavigableDocument = resourceType === "document" && policy.navigateHosts.has(host)
+  return !routed && ((policy.preserveRoutedOrigin && !explicitlyNavigableDocument) || (policy.mode === "block" && external && !policy.allowHosts.has(host) && !explicitlyNavigableDocument) || (resourceType === "document" && external && !explicitlyNavigableDocument))
 }
 
 function recordBrowserPreviewPolicyRequest(policy: BrowserPreviewNetworkPolicy, requestUrl: URL, outcome: "blocked" | "routed" | "handled"): void {
