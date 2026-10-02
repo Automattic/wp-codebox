@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm, stat } from "node:fs/promises"
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -44,6 +44,36 @@ test("browser actions capture=video records the session and adopts it as a named
   }
 })
 
+test("screenshot steps during video capture default to viewport-sized captures", async () => {
+  const fixture = await pageFixture(true)
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-video-"))
+  try {
+    await runBrowserActionsCommand({
+      artifactRoot,
+      runtimeSpec,
+      server: fixture.server,
+      spec: { command: "wordpress.browser-actions", args: [] },
+      plan: {
+        steps: [{ kind: "navigate", url: fixture.url, waitFor: "load" }, { kind: "screenshot" }],
+        capture: new Set(["steps", "video"]),
+        requestedEnvironment: { viewport: { width: 430, height: 932 } },
+        stepTimeoutMs: 2_000,
+        totalTimeoutMs: 10_000,
+        networkSettleTimeoutMs: 100,
+        maxDomSnapshotElements: 20,
+      },
+    })
+
+    const screenshot = await readFile(join(artifactRoot, "files/browser/screenshot.png"))
+    assert.equal(screenshot.readUInt32BE(20), 932, "screenshot height should remain the configured viewport, not the document height")
+    const records = (await readFile(join(artifactRoot, "files/browser/steps.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line))
+    assert.equal(records[1].fullPage, undefined, "the step record omits an unspecified option")
+  } finally {
+    await rm(artifactRoot, { recursive: true, force: true })
+    await fixture.close()
+  }
+})
+
 test("browser actions rejects an unsupported capture value", async () => {
   const fixture = await pageFixture()
   const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-video-"))
@@ -71,10 +101,10 @@ test("browser actions rejects an unsupported capture value", async () => {
   }
 })
 
-async function pageFixture() {
+async function pageFixture(tall = false) {
   const httpServer = createServer((_request, response) => {
     response.setHeader("content-type", "text/html")
-    response.end("<!doctype html><title>video fixture</title><button id=\"target\">press</button><main>ready</main>")
+    response.end(`<!doctype html><title>video fixture</title><button id="target">press</button><main style="height:${tall ? 10000 : 500}px">ready</main>`)
   })
   await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve))
   const address = httpServer.address()

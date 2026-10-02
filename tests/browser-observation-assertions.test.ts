@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 
 import { validateBrowserInteractionScript } from "../packages/runtime-core/src/browser-interaction.js"
+import { browserStepRecord } from "../packages/runtime-playground/src/browser-interactions.js"
 import { executeBrowserObservationAssertion } from "../packages/runtime-playground/src/browser-observation-assertions.js"
 import type { BrowserProbeNetworkRecord } from "../packages/runtime-playground/src/browser-artifacts.js"
 
@@ -13,6 +14,9 @@ const valid = validateBrowserInteractionScript([
 ])
 assert.equal(valid.valid, true)
 assert.equal(valid.issues.length, 0)
+assert.equal(validateBrowserInteractionScript([{ kind: "screenshot", fullPage: false }]).valid, true)
+assert.deepEqual(validateBrowserInteractionScript([{ kind: "screenshot", fullPage: "yes" }]).issues.map((issue) => issue.message), ["screenshot step fullPage must be a boolean"])
+assert.equal(browserStepRecord(0, { kind: "screenshot", fullPage: false }, "ok", "2026-01-01T00:00:00.000Z", Date.now(), "about:blank", {}).fullPage, false)
 
 const invalid = validateBrowserInteractionScript([
   { kind: "assertObservation" },
