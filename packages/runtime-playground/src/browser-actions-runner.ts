@@ -28,6 +28,7 @@ import { exploreAdaptiveBrowserStateMachine } from "./browser-adaptive-explorer.
 import { createBrowserAccessibilityCollector } from "./browser-accessibility-collector.js"
 import { browserEnvironmentCell, createPlaywrightBrowserEnvironmentContext, observePlaywrightBrowserEnvironment, resolvePlaywrightBrowserEnvironment, type PlaywrightBrowserEnvironmentSession } from "./browser-environment-matrix.js"
 import { installBrowserTransportFaults, type BrowserTransportFaultReport, type InstalledBrowserTransportFaults } from "./browser-transport-faults.js"
+import { browserPresentationInitScript, validateBrowserPresentation, type BrowserPresentation } from "./browser-presentation.js"
 
 export { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
 
@@ -55,6 +56,7 @@ export interface BrowserActionsRunPlan {
   adaptiveExploration?: BrowserAdaptiveExplorationContract
   transportFaults?: TransportFaultModel
   reusePage?: boolean
+  presentation?: BrowserPresentation
 }
 
 interface BrowserRunPlan {
@@ -206,7 +208,7 @@ export async function runBrowserActionsCommand({
     }
     // A recording is a context-level capability, so asking for video requires the
     // environment context path rather than a bare page.
-    const needsEnvironmentContext = Object.keys(requestedEnvironment).length > 0 || browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || !!runPlan.transportFaults || capture.has("video")
+    const needsEnvironmentContext = Object.keys(requestedEnvironment).length > 0 || browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || !!runPlan.transportFaults || capture.has("video") || !!runPlan.presentation
     if (capture.has("video")) {
       videoRecordingOrigin = performance.now()
       videoStartedWallAt = Date.now()
@@ -242,6 +244,7 @@ export async function runBrowserActionsCommand({
       })
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
+    if (runPlan.presentation) await page.addInitScript(browserPresentationInitScript(runPlan.presentation))
     if (storageStateImport) {
       authSummary = browserStorageStateAuthSummary(storageStateImport.summary)
     }
@@ -276,7 +279,7 @@ export async function runBrowserActionsCommand({
           await executeBrowserInteractionStep(page, navigateStep, preview.effectiveOrigin, stepTimeoutMs, async (fileName, write) => {
             await artifactSession.writeGenerated("screenshot", fileName, write)
             return { path: artifactSession.path(fileName), isDefault: fileName === "screenshot.png" }
-          }, capture.has("video"))
+          }, capture.has("video"), runPlan.presentation)
           finalUrl = page.url()
           requestedUrl = resolveBrowserPreviewUrl((navigateStep.url ?? "").trim(), preview.effectiveOrigin)
           stepRecords.push({ ...browserStepRecord(0, navigateStep, "ok", navigateStartedAt, navigateStartedAtMs, finalUrl, {}), ...(videoStartedAt !== undefined ? { videoOffsetMs: { startMs: Math.max(0, Math.round(navigateStartedAtMs - videoStartedWallAt!)), endMs: Math.max(0, Math.round(performance.now() - videoStartedAt)) } } : {}) })
@@ -415,7 +418,7 @@ export async function runBrowserActionsCommand({
             operation: executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, async (fileName, write) => {
               await artifactSession.writeGenerated("screenshot", fileName, write)
               return { path: artifactSession.path(fileName), isDefault: fileName === "screenshot.png" }
-            }, capture.has("video")),
+            }, capture.has("video"), runPlan.presentation),
             policy: { wallTimeoutMs: Math.min(browserStepTimeoutMs(step, stepTimeoutMs), livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)), idleTimeoutMs: 0 },
           })
         finalUrl = page.url()
@@ -861,6 +864,7 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
     actionCorpus: browserActionCorpusFromArgs(args),
     adaptiveExploration: adaptiveExplorationPlan.contract,
+    presentation: await browserPresentationFromArgs(args),
     transportFaults: await transportFaultModelFromArg(args),
   }
 }
@@ -884,6 +888,13 @@ function browserVideoSize(explicit: { width: number; height: number } | undefine
   const size = requested
   const factor = Math.min(1, Math.sqrt(BROWSER_VIDEO_MAX_PIXELS / (size.width * size.height)))
   return { width: Math.max(1, Math.floor(size.width * factor)), height: Math.max(1, Math.floor(size.height * factor)) }
+}
+
+async function browserPresentationFromArgs(args: string[]): Promise<BrowserPresentation | undefined> {
+  const raw = argValue(args, "presentation-json")
+  if (!raw) return undefined
+  const text = raw.startsWith("@") ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
+  return validateBrowserPresentation(JSON.parse(text))
 }
 
 async function browserEnvironmentFromArgs(args: string[]): Promise<BrowserEnvironment> {
