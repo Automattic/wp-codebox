@@ -221,7 +221,7 @@ export async function runBrowserActionsCommand({
         ...topology.contextOptions(),
         ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
         ...(runPlan.transportFaults ? { serviceWorkers: "block" as const } : {}),
-        ...(capture.has("video") ? { recordVideo: { dir: videoStagingDirectory, ...(browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport, requestedEnvironment.deviceScaleFactor) ? { size: browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport, requestedEnvironment.deviceScaleFactor) } : {}) } } : {}),
+        ...(capture.has("video") ? { recordVideo: { dir: videoStagingDirectory, ...(browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport) ? { size: browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport) } : {}) } } : {}),
       },
     }) : undefined)
     const context = environmentRuntime?.context ?? null
@@ -233,7 +233,7 @@ export async function runBrowserActionsCommand({
     if (capture.has("video")) {
       videoRecording = page.video()
       videoStartedAt = videoRecordingOrigin
-      videoDimensions = browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport, requestedEnvironment.deviceScaleFactor) ?? requestedEnvironment.viewport ?? { width: 1280, height: 720 }
+      videoDimensions = browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport) ?? requestedEnvironment.viewport ?? { width: 1280, height: 720 }
     }
     navigationTracker = trackBrowserNavigation(page)
     if (onProgress) {
@@ -891,11 +891,11 @@ function browserVideoSizeArg(args: string[]): { width: number; height: number } 
   const width = Number(match[1])
   const height = Number(match[2])
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) throw new Error("wordpress.browser-actions video-size dimensions must be positive integers")
-  return browserVideoSize({ width, height }, undefined, 1)
+  return browserVideoSize({ width, height }, undefined)
 }
 
-function browserVideoSize(explicit: { width: number; height: number } | undefined, viewport: { width: number; height: number } | undefined, scale = 1): { width: number; height: number } | undefined {
-  const requested = explicit ?? (viewport && scale > 1 ? { width: Math.round(viewport.width * scale), height: Math.round(viewport.height * scale) } : undefined)
+function browserVideoSize(explicit: { width: number; height: number } | undefined, viewport: { width: number; height: number } | undefined): { width: number; height: number } | undefined {
+  const requested = explicit ?? viewport
   if (!requested) return undefined
   const size = requested
   const factor = Math.min(1, Math.sqrt(BROWSER_VIDEO_MAX_PIXELS / (size.width * size.height)))
