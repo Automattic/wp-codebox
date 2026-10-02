@@ -4,6 +4,7 @@ import type { Frame, Page } from "playwright"
 import { browserActionLoadState, browserDeepEqual, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import type { BrowserEditorMutationSummary, BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepReadiness, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserCommandLivenessPolicy, withBrowserCommandLiveness } from "./browser-liveness.js"
+import type { BrowserPresentation } from "./browser-presentation.js"
 
 export interface BrowserStepOutcome {
   assertion?: BrowserStepAssertion
@@ -59,6 +60,7 @@ export async function executeBrowserInteractionStep(
   stepTimeoutMs: number,
   writeScreenshot: BrowserStepScreenshotWriter,
   videoCapture = false,
+  presentation?: BrowserPresentation,
 ): Promise<BrowserStepOutcome> {
   const timeout = browserStepTimeoutMs(step, stepTimeoutMs)
 
@@ -74,21 +76,29 @@ export async function executeBrowserInteractionStep(
       return {}
     }
     case "click": {
-      await browserStepLocator(page, step).click({ timeout })
+      const locator = browserStepLocator(page, step)
+      await preparePresentedTarget(page, locator, presentation, timeout)
+      await locator.click({ timeout })
       return {}
     }
     case "hover": {
-      await browserStepLocator(page, step).hover({ timeout })
+      const locator = browserStepLocator(page, step)
+      await preparePresentedTarget(page, locator, presentation, timeout)
+      await locator.hover({ timeout })
       return {}
     }
     case "fill": {
-      await page.locator(requireSelector(step, "fill")).fill(String(step.value ?? ""), { timeout })
+      const locator = page.locator(requireSelector(step, "fill"))
+      await preparePresentedTarget(page, locator, presentation, timeout)
+      if (presentation?.typing?.applyToFill) await locator.pressSequentially(String(step.value ?? ""), { timeout, delay: presentation.typing.delayMs ?? 0 })
+      else await locator.fill(String(step.value ?? ""), { timeout })
       return {}
     }
     case "type": {
       const locator = page.locator(requireSelector(step, "type"))
+      await preparePresentedTarget(page, locator, presentation, timeout)
       await locator.click({ timeout })
-      await locator.pressSequentially(String(step.value ?? ""), { timeout })
+      await locator.pressSequentially(String(step.value ?? ""), { timeout, delay: presentation?.typing?.delayMs ?? 0 })
       return {}
     }
     case "press": {
@@ -117,8 +127,42 @@ export async function executeBrowserInteractionStep(
     }
     case "select": {
       const locator = page.locator(requireSelector(step, "select"))
+      await preparePresentedTarget(page, locator, presentation, timeout)
       const values = Array.isArray(step.values) ? step.values : [String(step.value ?? "")]
       await locator.selectOption(values, { timeout })
+      return {}
+    }
+    case "scroll": {
+      await page.evaluate(async ({ selector, position, by, behavior, durationMs, block }) => {
+        const target = selector ? document.querySelector(selector) : null
+        if (selector && !target) throw new Error('scroll selector did not match an element: ' + selector)
+        if (behavior === "instant" || durationMs === 0) {
+          if (target) target.scrollIntoView({ behavior: "instant", block: block ?? "center" })
+          else window.scrollTo(by ? window.scrollX + by.x : 0, position === "bottom" ? document.documentElement.scrollHeight : by ? window.scrollY + by.y : 0)
+        } else if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: block ?? "center" })
+        } else {
+          const startX = window.scrollX, startY = window.scrollY
+          const endX = by ? startX + by.x : 0
+          const endY = position === "bottom" ? document.documentElement.scrollHeight : by ? startY + by.y : 0
+          const duration = durationMs ?? 500, start = performance.now()
+          let progress = 0
+          while (progress < 1) {
+            await new Promise<void>(resolve => setTimeout(resolve, 16))
+            progress = Math.min(1, (performance.now() - start) / duration)
+            const eased = progress * (2 - progress)
+            window.scrollTo(startX + (endX - startX) * eased, startY + (endY - startY) * eased)
+          }
+        }
+        let quiet = 0, lastX = window.scrollX, lastY = window.scrollY
+        while (quiet < 3) {
+          await new Promise<void>(resolve => setTimeout(resolve, 16))
+          if (window.scrollY === lastY && window.scrollX === lastX) quiet++
+          else quiet = 0
+          lastX = window.scrollX
+          lastY = window.scrollY
+        }
+      }, { selector: step.selector, position: step.position, by: step.by, behavior: step.behavior ?? "smooth", durationMs: step.durationMs, block: step.block })
       return {}
     }
     case "waitFor": {
@@ -214,6 +258,22 @@ function browserStepLocator(page: Page, step: BrowserInteractionStep) {
     return page.getByText(step.text)
   }
   throw new Error(`wordpress.browser-actions ${step.kind} requires selector or text`)
+}
+
+async function preparePresentedTarget(page: Page, locator: ReturnType<Page["locator"]>, presentation: BrowserPresentation | undefined, timeout: number): Promise<void> {
+  if (!presentation) return
+  await locator.evaluate(element => element.scrollIntoView({ behavior: "smooth", block: "center" }))
+  await locator.waitFor({ state: "visible", timeout })
+  await page.evaluate(() => new Promise<void>(resolve => {
+    let previous = window.scrollY, stable = 0
+    const check = () => { if (window.scrollY === previous) stable += 1; else stable = 0; previous = window.scrollY; if (stable >= 3) resolve(); else requestAnimationFrame(check) }
+    requestAnimationFrame(check)
+  }))
+  const box = await locator.boundingBox({ timeout })
+  if (!box) return
+  const duration = Math.max(0, presentation.motion?.moveDurationMs ?? 0)
+  const steps = Math.max(1, Math.ceil(duration / 16))
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps })
 }
 
 function requireSelector(step: BrowserInteractionStep, kind: string): string {

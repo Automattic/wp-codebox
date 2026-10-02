@@ -186,7 +186,8 @@
     "test:all": "npm run smoke -- --all",
     "check": "npm run smoke -- --group=check",
     "check:all": "npm run test:all && npm run cloudflare:check",
-    "test:browser-video-capture": "tsx tests/browser-actions-video-capture.browser.test.ts"
+    "test:browser-video-capture": "tsx tests/browser-actions-video-capture.browser.test.ts",
+    "test:browser-presentation": "tsx tests/browser-actions-presentation.browser.test.ts"
   },
   "workspaces": [
     "packages/cli",

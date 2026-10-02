@@ -23,6 +23,7 @@ export const BROWSER_INTERACTION_STEP_KINDS = [
   "drag",
   "hover",
   "select",
+  "scroll",
   "waitFor",
   "evaluate",
   "expect",
@@ -98,6 +99,11 @@ export interface BrowserInteractionStep {
   tool?: string
   /** JSON input passed to the caller-provided host tool. */
   input?: JsonValue
+  position?: "top" | "bottom"
+  by?: { x: number; y: number }
+  behavior?: "smooth" | "instant"
+  durationMs?: number
+  block?: "start" | "center" | "end"
 }
 
 export interface BrowserToolVerifierInputSummary {
@@ -312,6 +318,15 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
         if (typeof step.value !== "string" && !Array.isArray(step.values)) {
           issues.push({ index, message: "select step requires value or values" })
         }
+        break
+      case "scroll":
+        if (step.selector !== undefined && !hasSelector) issues.push({ index, message: "scroll step selector must be a non-empty string" })
+        if (step.position !== undefined && step.position !== "top" && step.position !== "bottom") issues.push({ index, message: 'scroll step position must be "top" or "bottom"' })
+        if (step.by !== undefined && (!isPlainObject(step.by) || typeof step.by.x !== "number" || typeof step.by.y !== "number")) issues.push({ index, message: "scroll step by must contain numeric x and y" })
+        if (step.position !== undefined && step.by !== undefined) issues.push({ index, message: "scroll step cannot combine position and by" })
+        if (step.behavior !== undefined && step.behavior !== "smooth" && step.behavior !== "instant") issues.push({ index, message: 'scroll step behavior must be "smooth" or "instant"' })
+        if (step.durationMs !== undefined && (typeof step.durationMs !== "number" || !Number.isFinite(step.durationMs) || step.durationMs < 0)) issues.push({ index, message: "scroll step durationMs must be a non-negative number" })
+        if (step.block !== undefined && !["start", "center", "end"].includes(step.block)) issues.push({ index, message: 'scroll step block must be "start", "center", or "end"' })
         break
       case "waitFor":
         if (!hasSelector && typeof step.waitFor !== "string") {
