@@ -38,6 +38,7 @@ test("navigation grants allow only declared external documents and appear in evi
   assert.equal(scope.resolve("https://other.example.test/", preview.effectiveOrigin).allowed, false)
   assert.equal(scope.resolve("https://other.example.test/escape", "https://events.example.test/").allowed, false)
   assert.equal(browserPreviewNetworkDecision("https://events.example.test/", policy).policyDecision, "allowed")
+  assert.equal(browserPreviewNetworkDecision("https://events.example.test/app.js", policy, "script").policyDecision, "blocked")
   assert.deepEqual(browserPreviewNetworkPolicySummary(policy).navigateHosts, ["events.example.test"])
 
   const allowedRoute = await routedFixture("document", [], undefined, { url: "https://events.example.test/", policyArgs: ["navigate-host=events.example.test", "network-policy=block"] })
@@ -48,6 +49,10 @@ test("navigation grants allow only declared external documents and appear in evi
   const unlistedRoute = await routedFixture("document", [], undefined, { url: "https://other.example.test/", policyArgs: ["navigate-host=events.example.test"] })
   await unlistedRoute.run()
   assert.equal(unlistedRoute.abortCalls(), 1)
+
+  const redirectEscape = await routedFixture("document", [], undefined, { url: "https://other.example.test/escape", policyArgs: ["navigate-host=events.example.test"] })
+  await redirectEscape.run()
+  assert.equal(redirectEscape.abortCalls(), 1)
   assert.equal(defaultPolicy.navigateHosts.size, 0)
 })
 
