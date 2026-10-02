@@ -58,6 +58,7 @@ export async function executeBrowserInteractionStep(
   baseUrl: string,
   stepTimeoutMs: number,
   writeScreenshot: BrowserStepScreenshotWriter,
+  videoCapture = false,
 ): Promise<BrowserStepOutcome> {
   const timeout = browserStepTimeoutMs(step, stepTimeoutMs)
 
@@ -144,6 +145,7 @@ export async function executeBrowserInteractionStep(
     case "screenshot": {
       const readiness = isPaintedReadinessWait(step.waitFor) ? await waitForPaintedReadiness(page, step.waitFor, timeout) : undefined
       const frameTarget = await screenshotFrameTarget(page, step, timeout)
+      const fullPage = step.fullPage ?? !videoCapture
       let fallback: { reason: string; mode: "page-screenshot" } | undefined
       const fileName = typeof step.name === "string" && step.name.length > 0 ? `screenshot-${sanitizeScreenshotName(step.name)}.png` : "screenshot.png"
       const screenshot = await writeScreenshot(fileName, async (path) => {
@@ -152,10 +154,10 @@ export async function executeBrowserInteractionStep(
             await frameTarget.frame.locator("html").first().screenshot({ path, timeout })
           } catch (error) {
             fallback = { reason: error instanceof Error ? error.message : String(error), mode: "page-screenshot" }
-            await page.screenshot({ path, fullPage: true })
+            await page.screenshot({ path, fullPage })
           }
         } else {
-          await page.screenshot({ path, fullPage: true })
+          await page.screenshot({ path, fullPage })
         }
       })
       return {
@@ -389,6 +391,7 @@ export function browserStepRecord(
     ...(typeof step.text === "string" ? { text: step.text } : {}),
     ...(typeof step.key === "string" ? { key: step.key } : {}),
     ...(typeof step.waitFor === "string" ? { waitFor: step.waitFor } : {}),
+    ...(typeof step.fullPage === "boolean" ? { fullPage: step.fullPage } : {}),
     ...(typeof step.duration === "string" ? { duration: step.duration } : {}),
     ...(outcome.assertion ? { assertion: outcome.assertion } : {}),
     ...(outcome.readiness ? { readiness: outcome.readiness } : {}),

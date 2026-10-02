@@ -18,14 +18,19 @@ export async function browserInteractionStepsFromArgs(args: string[]): Promise<B
 
 async function parseBrowserStepsPayload(raw: string, name: string): Promise<unknown> {
   let text = raw
+  let sourcePath: string | undefined
   if (raw.startsWith("@")) {
-    const path = raw.slice(1)
-    text = await readFile(resolveCommandPath(path), "utf8")
+    sourcePath = resolveCommandPath(raw.slice(1))
+    try {
+      text = await readFile(sourcePath, "utf8")
+    } catch (error) {
+      throw new Error(`${name} could not read ${sourcePath}: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
   try {
     return JSON.parse(text)
   } catch (error) {
-    throw new Error(`${name} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+    throw new Error(`${name} must be valid JSON${sourcePath ? ` from ${sourcePath}` : ""}: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

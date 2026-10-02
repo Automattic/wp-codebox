@@ -86,6 +86,8 @@ export interface BrowserInteractionStep {
   frameSelector?: string
   /** Optional iframe URL fragment for `screenshot`; captures the matching iframe document instead of the top page. */
   frameUrl?: string
+  /** Whether a screenshot captures the full document; defaults to true except during video capture. */
+  fullPage?: boolean
   /** Optional wait duration (e.g. 500ms, 2s) for `waitFor`/`navigate`. */
   duration?: string
   /** Per-step timeout override (e.g. 5s). */
@@ -330,6 +332,10 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
         }
         break
       case "screenshot":
+        if (step.fullPage !== undefined && typeof step.fullPage !== "boolean") {
+          issues.push({ index, message: "screenshot step fullPage must be a boolean" })
+        }
+        break
       case "capture":
         break
       case "callTool":

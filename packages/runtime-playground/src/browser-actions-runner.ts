@@ -262,7 +262,7 @@ export async function runBrowserActionsCommand({
           await executeBrowserInteractionStep(page, navigateStep, preview.effectiveOrigin, stepTimeoutMs, async (fileName, write) => {
             await artifactSession.writeGenerated("screenshot", fileName, write)
             return { path: artifactSession.path(fileName), isDefault: fileName === "screenshot.png" }
-          })
+          }, capture.has("video"))
           finalUrl = page.url()
           requestedUrl = resolveBrowserPreviewUrl((navigateStep.url ?? "").trim(), preview.effectiveOrigin)
           stepRecords.push(browserStepRecord(0, navigateStep, "ok", navigateStartedAt, navigateStartedAtMs, finalUrl, {}))
@@ -400,7 +400,7 @@ export async function runBrowserActionsCommand({
             operation: executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, async (fileName, write) => {
               await artifactSession.writeGenerated("screenshot", fileName, write)
               return { path: artifactSession.path(fileName), isDefault: fileName === "screenshot.png" }
-            }),
+            }, capture.has("video")),
             policy: { wallTimeoutMs: Math.min(browserStepTimeoutMs(step, stepTimeoutMs), livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)), idleTimeoutMs: 0 },
           })
         finalUrl = page.url()
