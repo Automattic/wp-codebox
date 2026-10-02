@@ -1422,8 +1422,21 @@ function normalizeBrowserScenarioAssertion(assertion: Record<string, unknown>): 
 async function parseJsonArrayArg(args: string[], name: string): Promise<Array<Record<string, unknown>> | undefined> {
   const raw = argValue(args, name)
   if (!raw) return undefined
-  const text = raw.startsWith("@") ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
-  const parsed = JSON.parse(text) as unknown
+  const sourcePath = raw.startsWith("@") ? resolveCommandPath(raw.slice(1)) : undefined
+  let text = raw
+  if (sourcePath) {
+    try {
+      text = await readFile(sourcePath, "utf8")
+    } catch (error) {
+      throw new Error(`wordpress.browser-scenario ${name} could not read ${sourcePath}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch (error) {
+    throw new Error(`wordpress.browser-scenario ${name} must be valid JSON${sourcePath ? ` from ${sourcePath}` : ""}: ${error instanceof Error ? error.message : String(error)}`)
+  }
   if (!Array.isArray(parsed)) {
     throw new Error(`wordpress.browser-scenario ${name} must be a JSON array`)
   }
