@@ -11,6 +11,7 @@ type AnnotationSpec = {
   animate?: string
   direction?: string
   position?: string
+  offset?: number
   style?: { variant?: string; padding?: number }
   anchor?: { selector?: string; placement?: string }
   theme?: BrowserAnnotationTheme
@@ -37,7 +38,7 @@ export async function executeBrowserAnnotation(page: Page, step: BrowserInteract
   const spec: AnnotationSpec = {
     id: step.id, shape: step.shape, selector: step.selector, text: step.text, durationMs: step.durationMs,
     animate: step.animate, direction: step.direction, position: step.position,
-    style: step.style, anchor: step.anchor, theme: annotationTheme,
+    style: step.style, anchor: step.anchor, theme: annotationTheme, offset: step.offset,
   }
   await page.evaluate("globalThis.__name ??= (value) => value")
   await page.evaluate<void, AnnotationSpec>((spec) => {
@@ -115,8 +116,11 @@ export async function executeBrowserAnnotation(page: Page, step: BrowserInteract
      if (spec.shape === "arrow") { const svg=document.createElementNS("http://www.w3.org/2000/svg","svg"); svg.setAttribute("width","80");svg.setAttribute("height","80");svg.setAttribute("viewBox","0 0 80 80");const path=document.createElementNS(svg.namespaceURI,"path");path.setAttribute("fill","none");path.setAttribute("stroke",color);path.setAttribute("stroke-width",String(theme.strokeWidth??3));path.setAttribute("stroke-linecap","round");path.setAttribute("stroke-linejoin","round");if(spec.animate==="draw"){path.setAttribute("stroke-dasharray","120");path.setAttribute("stroke-dashoffset","120");path.animate([{strokeDashoffset:"120"},{strokeDashoffset:"0"}],{duration:600,fill:"forwards"})}svg.append(path);node.append(svg) }
     if (spec.shape === "label" || spec.shape === "caption") {
       node.textContent = spec.text || ""
-      Object.assign(node.style, { padding: "8px 12px", borderRadius: `${Number(theme.radius ?? 6)}px`, color: textColor, background, fontFamily: theme.fontFamily ?? "system-ui, sans-serif", fontSize: `${Number(theme.fontSize ?? 16)}px`, whiteSpace: "nowrap" })
-      if (spec.shape === "caption") Object.assign(node.style, { left: "10%", right: "10%", top: spec.position === "top" ? "8%" : spec.position === "center" ? "45%" : "auto", bottom: spec.position === "bottom" || !spec.position ? "8%" : "auto", textAlign: "center" })
+      Object.assign(node.style, { padding: "8px 12px", borderRadius: `${Number(theme.radius ?? 6)}px`, color: textColor, background, fontFamily: theme.fontFamily ?? "system-ui, sans-serif", fontSize: `${Number(theme.fontSize ?? 16)}px`, whiteSpace: spec.shape === "caption" ? "normal" : "nowrap" })
+      if (spec.shape === "caption") {
+        const inset = `${8 + Number(spec.offset ?? 0)}px`
+        Object.assign(node.style, { left: "10%", right: "10%", top: spec.position === "top" ? `calc(8% + ${inset})` : spec.position === "center" ? `calc(45% + ${inset})` : "auto", bottom: spec.position === "bottom" || !spec.position ? `calc(8% + ${inset})` : "auto", textAlign: "center", overflowWrap: "anywhere" })
+      }
     }
     node.dataset.annotationId = id
     layer.append(node)

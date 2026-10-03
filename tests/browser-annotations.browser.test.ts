@@ -22,6 +22,9 @@ test("annotation shapes and clear validate", () => {
   ]) assert.equal(validateBrowserInteractionScript([step]).valid, true)
   assert.equal(validateBrowserInteractionScript([{ kind: "annotate", shape: "label", text: "x" }]).valid, false)
   assert.equal(validateBrowserInteractionScript([{ kind: "annotate", shape: "arrow", selector: "button", direction: "nearby" }]).valid, false)
+  assert.equal(validateBrowserInteractionScript([{ kind: "annotate", shape: "caption", text: "Next", offset: 120 }]).valid, true)
+  assert.equal(validateBrowserInteractionScript([{ kind: "annotate", shape: "caption", text: "Next", offset: -1 }]).valid, false)
+  assert.equal(validateBrowserInteractionScript([{ kind: "annotate", shape: "label", text: "Next", offset: 10, anchor: { selector: "button" } }]).valid, false)
 })
 
 test("annotation renders in isolated overlay, follows scrolling, passes clicks, and clears by id", async () => {
@@ -71,5 +74,30 @@ test("arrows point to the target edge and labels avoid adjacent controls", async
       })
     })
     assert.equal(overlap, false)
+  } finally { await browser.close() }
+})
+
+test("captions wrap inside their pill and apply a validated vertical offset", async () => {
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage({ viewport: { width: 320, height: 600 } })
+  try {
+    await page.setContent("<div></div>")
+    await executeBrowserAnnotation(page, { kind: "annotate", id: "caption", shape: "caption", position: "top", offset: 120, text: "WordPress Meetup · Wed Oct 21 · 6:30pm" } as never)
+    const dimensions = await page.evaluate(() => {
+      const root = document.querySelector("#__wp_codebox_annotations")!.shadowRoot!
+      const caption = root.querySelector('[data-annotation-id="caption"]')!
+      const pill = caption.getBoundingClientRect()
+      const range = document.createRange()
+      range.selectNodeContents(caption)
+      const text = [...range.getClientRects()]
+      return { textRects: text.map(({ left, right, top, bottom }) => ({ left, right, top, bottom })), pill: { left: pill.left, right: pill.right, top: pill.top, bottom: pill.bottom }, viewportWidth: innerWidth, height: pill.height, whiteSpace: getComputedStyle(caption).whiteSpace, overflowWrap: getComputedStyle(caption).overflowWrap }
+    })
+    assert.ok(dimensions.textRects.length > 1, "long caption should produce multiple text lines")
+    assert.ok(dimensions.textRects.every(({ left, right, top, bottom }) => left >= dimensions.pill.left && right <= dimensions.pill.right && top >= dimensions.pill.top && bottom <= dimensions.pill.bottom))
+    assert.ok(dimensions.textRects.every(({ left, right }) => left >= 0 && right <= dimensions.viewportWidth))
+    assert.equal(dimensions.pill.top, 176)
+    assert.ok(dimensions.height > 32, "long caption should wrap into multiple lines")
+    assert.equal(dimensions.whiteSpace, "normal")
+    assert.equal(dimensions.overflowWrap, "anywhere")
   } finally { await browser.close() }
 })
