@@ -101,6 +101,8 @@ export interface BrowserInteractionStep {
   /** JSON input passed to the caller-provided host tool. */
   input?: JsonValue
   position?: "top" | "center" | "bottom"
+  /** Additional vertical inset in pixels for captions. */
+  offset?: number
   by?: { x: number; y: number }
   behavior?: "smooth" | "instant"
   block?: "start" | "center" | "end"
@@ -389,6 +391,7 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
         if (["label", "caption"].includes(String(step.shape)) && !hasText) issues.push({ index, message: `annotate ${step.shape} requires text` })
         if (step.shape === "label" && (!step.anchor || typeof step.anchor.selector !== "string" || !step.anchor.selector)) issues.push({ index, message: "annotate label requires anchor.selector" })
         if (step.shape === "caption" && step.position !== undefined && !["top", "center", "bottom"].includes(step.position)) issues.push({ index, message: "annotate caption position must be top, center, or bottom" })
+        if (step.offset !== undefined && (step.shape !== "caption" || !Number.isFinite(step.offset) || step.offset < 0)) issues.push({ index, message: "annotate offset must be a non-negative number for captions" })
         if (step.shape === "arrow" && step.direction !== undefined && !["top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"].includes(step.direction)) issues.push({ index, message: "annotate arrow direction is invalid" })
         break
     }
