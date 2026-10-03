@@ -12,6 +12,8 @@ export const WORDPRESS_RUNTIME_BACKEND_ALIAS = "wordpress" as const
  */
 export interface RuntimeBackendFactoryContext {
   readonly cliModule?: unknown
+  /** Adapter-owned process/container driver; core keeps this implementation-neutral. */
+  readonly nativeRuntimeDriver?: unknown
 }
 
 export interface RuntimeBackendRecipePolicy {
