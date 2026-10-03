@@ -58,6 +58,7 @@ const commandStepHelpers = [
 ].map((functionName) => phpFunctionBlock(benchRunner, functionName)).join("\n\n")
 
 const configuredWorkloadHelpers = [
+  "wp_codebox_bench_skip_reason",
   "wp_codebox_bench_metric_prefix",
   "wp_codebox_bench_command_step_record",
   "wp_codebox_bench_run_command_step",

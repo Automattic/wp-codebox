@@ -253,7 +253,7 @@ async function runBenchmarkRecipeMatrix(options: BenchmarkMatrixOptions): Promis
     matrix,
     cells,
     benchResults: cells
-      .filter((cell): cell is BenchmarkMatrixCellResult & { benchResultsList: BenchResults[] } => cell.status === "succeeded" && Array.isArray(cell.benchResultsList))
+      .filter((cell): cell is BenchmarkMatrixCellResult & { benchResultsList: BenchResults[] } => cell.status !== "failed" && Array.isArray(cell.benchResultsList))
       .map((cell) => ({ cellId: cell.cell.id, cell: cell.cell, results: cell.benchResultsList })),
     diagnostics: cells.flatMap((cell) => cell.diagnostics),
     provenance: {
@@ -483,6 +483,7 @@ function printBenchmarkMatrixHumanOutput(output: BenchmarkMatrixRunOutput): void
   console.log(`Recipe: ${output.source.recipePath}`)
   console.log(`Cells: ${output.cells.length}`)
   console.log(`Succeeded: ${output.cells.filter((cell) => cell.status === "succeeded").length}`)
+  console.log(`Incomplete: ${output.cells.filter((cell) => cell.status === "incomplete").length}`)
   console.log(`Failed: ${output.cells.filter((cell) => cell.status === "failed").length}`)
 }
 
