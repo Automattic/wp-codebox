@@ -145,7 +145,11 @@ export async function runBrowserActionsCommand({
   const startedAt = now()
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, 0)
-  const browser = session?.browser ?? await launchChromiumBrowser()
+  // High-fidelity capture streams compositor frames over CDP. Chromium only
+  // composites at device pixels for the screencast when the scale is forced
+  // at launch; the context's deviceScaleFactor alone yields CSS-pixel frames.
+  const highVideoScale = runPlan.videoQuality === "high" && capture.has("video") ? (requestedEnvironment.deviceScaleFactor ?? 1) : 1
+  const browser = session?.browser ?? await launchChromiumBrowser(highVideoScale !== 1 ? { args: [`--force-device-scale-factor=${highVideoScale}`] } : {})
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
   const routeTracker = session?.routeTracker ?? createBrowserPreviewRouteTracker()
@@ -159,6 +163,7 @@ export async function runBrowserActionsCommand({
   let stopVideoCapture = false
   let videoFrameCount = 0
   let videoFrameError: Error | undefined
+  const videoFrameTimes: number[] = []
   const highVideo = runPlan.videoQuality === "high"
   let videoSaved = false
   let videoCaptureFailed = false
@@ -247,17 +252,25 @@ export async function runBrowserActionsCommand({
         videoDimensions = { width: Math.round(viewport.width * scale), height: Math.round(viewport.height * scale) }
         const frameDirectory = join(videoStagingDirectory, "frames")
         await mkdir(frameDirectory, { recursive: true })
+        // Stream compositor frames over CDP: Chromium emits a frame on every
+        // repaint (~60fps during motion, none while idle), so cursor glides and
+        // smooth scrolls stay continuous. Each frame keeps its paint timestamp
+        // and is encoded with its real duration.
+        const cdp = await page.context().newCDPSession(page)
+        const frameWrites: Array<Promise<void>> = []
+        cdp.on("Page.screencastFrame", (frame: { data: string; sessionId: number; metadata: { timestamp?: number } }) => {
+          const index = ++videoFrameCount
+          const paintedAtMs = typeof frame.metadata.timestamp === "number" ? frame.metadata.timestamp * 1000 : Date.now()
+          videoFrameTimes.push(paintedAtMs)
+          frameWrites.push(writeFile(join(frameDirectory, `frame-${String(index).padStart(6, "0")}.jpg`), Buffer.from(frame.data, "base64")).catch((error) => { videoFrameError ??= error instanceof Error ? error : new Error(String(error)) }))
+          void cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => undefined)
+        })
+        await cdp.send("Page.startScreencast", { format: "jpeg", quality: 92, maxWidth: videoDimensions.width, maxHeight: videoDimensions.height, everyNthFrame: 1 })
         videoCaptureTask = (async () => {
-          while (!stopVideoCapture) {
-            try {
-              const frame = await page.screenshot({ type: "jpeg", quality: 95, scale: "device", animations: "allow" })
-              await writeFile(join(frameDirectory, `frame-${String(++videoFrameCount).padStart(6, "0")}.jpg`), frame)
-            } catch (error) {
-              if (stopVideoCapture) return
-            }
-            const nextFrameAt = (videoRecordingOrigin ?? performance.now()) + videoFrameCount * 100
-            await new Promise((resolve) => setTimeout(resolve, Math.max(0, nextFrameAt - performance.now())))
-          }
+          while (!stopVideoCapture) await new Promise((resolve) => setTimeout(resolve, 50))
+          await cdp.send("Page.stopScreencast").catch(() => undefined)
+          await Promise.all(frameWrites)
+          await cdp.detach().catch(() => undefined)
         })()
       } else {
         videoRecording = page.video()
@@ -609,7 +622,13 @@ export async function runBrowserActionsCommand({
         // decoder only) as well as a full system build. Quality-first settings
         // replace the realtime recorder's ~1 Mbps warm-up.
         const frameFiles = (await readdir(frames)).filter((entry) => entry.endsWith(".jpg")).sort().map((entry) => join(frames, entry))
-        await runFfmpeg(ffmpeg, ["-y", "-f", "image2pipe", "-c:v", "mjpeg", "-framerate", "10", "-i", "pipe:0", "-c:v", "libvpx", "-deadline", "good", "-cpu-used", "0", "-crf", "4", "-b:v", "40M", "-qmin", "0", "-qmax", "12", "-pix_fmt", "yuv420p", "-an", output], frameFiles)
+        // Screencast frames arrive only when the page repaints. Resample them
+        // onto a constant 30fps timeline anchored at the recording origin (the
+        // same origin step markers use): each output tick shows the latest
+        // frame painted at or before it.
+        const durationMs = Math.max(1, (videoFinishedAt ?? performance.now()) - (videoStartedAt ?? videoRecordingOrigin ?? performance.now()))
+        const timeline = highVideoFrameTimeline(videoFrameTimes.slice(0, frameFiles.length), videoStartedWallAt ?? videoFrameTimes[0] ?? 0, durationMs, HIGH_VIDEO_FPS)
+        await runFfmpeg(ffmpeg, ["-y", "-f", "image2pipe", "-c:v", "mjpeg", "-framerate", String(HIGH_VIDEO_FPS), "-i", "pipe:0", "-c:v", "libvpx", "-deadline", "good", "-cpu-used", "0", "-crf", "4", "-b:v", "40M", "-qmin", "0", "-qmax", "12", "-pix_fmt", "yuv420p", "-an", output], timeline.map((index) => frameFiles[index]!))
         await artifactSession.writeGenerated("video", "video.webm", (path) => copyFile(output, path))
         videoSaved = true
       } catch (error) {
@@ -687,7 +706,7 @@ export async function runBrowserActionsCommand({
       path: "files/browser/video.webm",
       width: videoDimensions?.width ?? 0,
       height: videoDimensions?.height ?? 0,
-      fps: highVideo ? 10 : 30,
+      fps: 30,
       durationMs: Math.max(0, Math.round((videoFinishedAt ?? performance.now()) - (videoStartedAt ?? performance.now()))),
       markers: videoMarkers,
     } : undefined
@@ -932,6 +951,26 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     annotationTheme: await browserAnnotationThemeFromArgs(args),
     transportFaults: await transportFaultModelFromArg(args),
   }
+}
+
+const HIGH_VIDEO_FPS = 30
+
+/**
+ * Map a constant-rate output timeline onto variable-rate screencast frames.
+ * Returns, for each output tick, the index of the latest frame painted at or
+ * before that tick (the first frame before any paint).
+ */
+export function highVideoFrameTimeline(frameTimesMs: number[], originMs: number, durationMs: number, fps: number): number[] {
+  if (frameTimesMs.length === 0) return []
+  const ticks = Math.max(1, Math.round((durationMs / 1000) * fps))
+  const out: number[] = []
+  let cursor = 0
+  for (let tick = 0; tick < ticks; tick++) {
+    const at = originMs + (tick * 1000) / fps
+    while (cursor + 1 < frameTimesMs.length && frameTimesMs[cursor + 1]! <= at) cursor++
+    out.push(cursor)
+  }
+  return out
 }
 
 function browserVideoQualityArg(args: string[]): "default" | "high" {
