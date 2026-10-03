@@ -185,7 +185,7 @@ try {
   const bootstrapRuns: Array<({ code: string } | { scriptPath: string }) & { env?: Record<string, string> }> = []
   const cliModule: PlaygroundCliModule = { async runCLI(options) {
     bootstrapCalls.push(options)
-    return { serverUrl: "http://127.0.0.1:65535", playground: { async run(runOptions) { bootstrapRuns.push(runOptions); return { text: options.phpEnv?.DB_PASSWORD ?? "" } } }, async [Symbol.asyncDispose]() {} }
+    return { serverUrl: "http://127.0.0.1:65535", playground: { async run(runOptions) { bootstrapRuns.push(runOptions); return { text: runOptions.env?.DB_PASSWORD ?? "" } } }, async [Symbol.asyncDispose]() {} }
   } }
   const secondaryConnectorSecret = "secondary-connector-secret"
   const runtimeSpec: RuntimeCreateSpec = {
@@ -210,7 +210,7 @@ try {
   await server.playground.run({ code: generatedCommandPhp })
   await server.playground.run({ code: generatedAbilityPhp })
   assert.equal(connectorResponse.text, generatedPassword, "generated password reaches PHP through the ephemeral run environment")
-  assert.equal(bootstrapRuns[0]?.env?.DB_PASSWORD, undefined, "direct runs rely on the isolated PHP runtime environment")
+  assert.equal(bootstrapRuns[0]?.env?.DB_PASSWORD, generatedPassword, "direct runs receive connector secrets through PHP.run env")
   assert.equal(bootstrapRuns.every((run) => !("code" in run) || !run.code.includes(generatedPassword)), true, "captured PHP source never contains the connector password")
   assert.equal(bootstrapCalls[0]?.phpEnv?.DB_PASSWORD, generatedPassword, "Playground startup receives the generated password through its in-memory PHP environment")
   assert.equal(bootstrapCalls[0]?.phpEnv?.CACHE_AUTH, secondaryConnectorSecret, "multiple connector targets resolve through the same in-memory channel")
