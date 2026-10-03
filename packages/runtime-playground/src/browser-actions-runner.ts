@@ -1,4 +1,4 @@
-import { copyFile, readdir, readFile, writeFile } from "node:fs/promises"
+import { copyFile, readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_PROBE_PROFILES, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserAdaptiveExplorationContract, browserEnvironment, browserEnvironmentDigest, browserGeolocation, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, transportFaultModel, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserAdaptiveExplorationArtifact, type BrowserAdaptiveExplorationContract, type BrowserEnvironment, type BrowserGeolocationPermissionState, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec, type TransportFaultModel } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
@@ -152,6 +152,7 @@ export async function runBrowserActionsCommand({
   const videoStagingDirectory = artifactSession.absolutePath("video-source")
   let videoRecording: import("playwright").Video | null = null
   let videoSaved = false
+  let videoCaptureFailed = false
   let videoStartedAt: number | undefined
   let videoStartedWallAt: number | undefined
   let videoRecordingOrigin: number | undefined
@@ -567,13 +568,17 @@ export async function runBrowserActionsCommand({
       // video.saveAs(), which requires a browser connection that cleanup has closed.
       try {
         videoFinishedAt = performance.now()
-        const staged = (await readdir(videoStagingDirectory)).filter((entry) => entry.endsWith(".webm")).sort()
-        if (staged.length === 0) throw new Error("wordpress.browser-actions capture=video produced no recording")
-        const source = join(videoStagingDirectory, staged[0])
+        const source = await videoRecording.path()
+        const recording = await stat(source)
+        if (!recording.isFile() || recording.size === 0) throw new Error("wordpress.browser-actions capture=video produced an empty recording")
         await artifactSession.writeGenerated("video", "video.webm", (path) => copyFile(source, path))
+        const adopted = await stat(artifactSession.absolutePath("video.webm"))
+        if (!adopted.isFile() || adopted.size === 0) throw new Error("wordpress.browser-actions capture=video adopted an empty recording")
         videoSaved = true
       } catch (error) {
         errors.push(serializeBrowserError("probe-error", error))
+        videoCaptureFailed = true
+        pendingError ??= error instanceof Error ? error : new Error(String(error))
       }
     }
     if (capture.has("steps")) {
@@ -582,7 +587,7 @@ export async function runBrowserActionsCommand({
     if (capture.has("console")) {
       await artifactSession.writeJsonLines("console", "console.jsonl", consoleMessages)
     }
-    if (capture.has("errors")) {
+    if (capture.has("errors") || videoCaptureFailed) {
       await artifactSession.writeJsonLines("errors", "errors.jsonl", errors)
     }
     if (capture.has("network")) {
@@ -642,7 +647,7 @@ export async function runBrowserActionsCommand({
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
-        ...(capture.has("errors") ? { errors: "files/browser/errors.jsonl" } : {}),
+        ...(capture.has("errors") || videoCaptureFailed ? { errors: "files/browser/errors.jsonl" } : {}),
 		...(htmlSha256 ? { html: "files/browser/snapshot.html" } : {}),
 		...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
 		...(capture.has("network") ? { requestCoverage: "files/browser/request-coverage.json" } : {}),
