@@ -38,11 +38,13 @@ test("browser actions capture=video records the session and adopts it as a named
     })
 
     assert.equal(result.artifact.summary.video, true, "the summary must report the recording")
+    assert.equal(result.artifact.summary.errors, 0, "a finalized recording should not add capture errors")
 
     const recording = join(artifactRoot, "files/browser/video.webm")
     const recorded = await stat(recording)
     assert(recorded.isFile(), "the recording must be adopted as video.webm")
     assert(recorded.size > 0, "the recording must not be empty")
+    assert(recorded.size > 1_000, "the recording must contain finalized video data")
     const summary = JSON.parse(await readFile(join(artifactRoot, "files/browser/action-summary.json"), "utf8"))
     assert.deepEqual({ width: summary.video.width, height: summary.video.height }, { width: 860, height: 1864 })
     assert.deepEqual(summary.video.markers.map((marker: { index: number; name: string }) => [marker.index, marker.name]), [[1, "button pressed"], [2, "after-action"]])
