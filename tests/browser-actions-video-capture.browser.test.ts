@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises"
 import { createServer } from "node:http"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { spawnSync } from "node:child_process"
@@ -116,6 +116,48 @@ test("browser actions records high-density viewport video without padding", asyn
     } else {
       test.diagnostic?.("ffmpeg unavailable; skipped bottom-right pixel padding check")
     }
+  } finally {
+    await rm(artifactRoot, { recursive: true, force: true })
+    await fixture.close()
+  }
+})
+
+test("browser actions high video quality captures and encodes device-pixel frames", async () => {
+  const fixture = await pageFixture()
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-video-high-"))
+  try {
+    await runBrowserActionsCommand({
+      artifactRoot,
+      runtimeSpec,
+      server: fixture.server,
+      spec: { command: "wordpress.browser-actions", args: [] },
+      plan: {
+        steps: [{ kind: "navigate", url: fixture.url, waitFor: "load" }, { kind: "waitFor", selector: "#target", marker: "ready" }],
+        capture: new Set(["steps", "video"]),
+        videoQuality: "high",
+        requestedEnvironment: { viewport: { width: 540, height: 960 }, deviceScaleFactor: 2 },
+        stepTimeoutMs: 2_000,
+        totalTimeoutMs: 10_000,
+        networkSettleTimeoutMs: 100,
+        maxDomSnapshotElements: 20,
+      },
+    })
+    const recording = join(artifactRoot, "files/browser/video.webm")
+    assert((await stat(recording)).size > 0)
+    // Decode with the same ffmpeg the encoder resolves (Playwright's bundled
+    // build on CI), so the test needs no system ffmpeg. Its stream header
+    // reports the true encoded frame size.
+    const browsers = process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(homedir(), ".cache", "ms-playwright")
+    const bundled = (await readdir(browsers).catch(() => [] as string[])).filter((entry) => entry.startsWith("ffmpeg-")).sort().reverse()
+    const ffmpeg = process.env.FFMPEG_PATH ?? (bundled[0] ? join(browsers, bundled[0], process.platform === "linux" ? "ffmpeg-linux" : process.platform === "darwin" ? "ffmpeg-mac" : "ffmpeg-win64.exe") : "ffmpeg")
+    const decoded = spawnSync(ffmpeg, ["-hide_banner", "-i", recording, "-frames:v", "1", "-c:v", "libvpx", "-f", "webm", "-y", join(artifactRoot, "decoded-probe.webm")], { timeout: 30_000, encoding: "utf8" })
+    assert.equal(decoded.status, 0, `encoded high-quality video should decode: ${decoded.stderr}`)
+    assert.match(decoded.stderr, /Video: vp8[^\n]*\b1080x1920\b/, "video stream is encoded at device pixels")
+    const summary = JSON.parse(await readFile(join(artifactRoot, "files/browser/action-summary.json"), "utf8"))
+    assert.deepEqual([summary.video.width, summary.video.height], [1080, 1920])
+    assert.equal(summary.video.fps, 10)
+    assert.deepEqual(summary.video.markers.map((marker: { name: string }) => marker.name), ["ready"])
+    assert(summary.video.markers[0].endMs >= summary.video.markers[0].startMs)
   } finally {
     await rm(artifactRoot, { recursive: true, force: true })
     await fixture.close()
