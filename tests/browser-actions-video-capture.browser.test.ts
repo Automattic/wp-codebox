@@ -7,7 +7,7 @@ import test from "node:test"
 import { spawnSync } from "node:child_process"
 import { existsSync } from "node:fs"
 
-import { runBrowserActionsCommand } from "../packages/runtime-playground/src/browser-actions-runner.js"
+import { highVideoFrameTimeline, runBrowserActionsCommand } from "../packages/runtime-playground/src/browser-actions-runner.js"
 import { wordpressRuntimeSpec } from "../scripts/test-kit.js"
 
 const runtimeSpec = wordpressRuntimeSpec({ commands: ["wordpress.browser-actions"] })
@@ -155,7 +155,7 @@ test("browser actions high video quality captures and encodes device-pixel frame
     assert.match(decoded.stderr, /Video: vp8[^\n]*\b1080x1920\b/, "video stream is encoded at device pixels")
     const summary = JSON.parse(await readFile(join(artifactRoot, "files/browser/action-summary.json"), "utf8"))
     assert.deepEqual([summary.video.width, summary.video.height], [1080, 1920])
-    assert.equal(summary.video.fps, 10)
+    assert.equal(summary.video.fps, 30)
     assert.deepEqual(summary.video.markers.map((marker: { name: string }) => marker.name), ["ready"])
     assert(summary.video.markers[0].endMs >= summary.video.markers[0].startMs)
   } finally {
@@ -221,3 +221,11 @@ function bottomRightVideoPixel(videoPath: string): number[] | undefined {
   }
   return undefined
 }
+
+test("high video quality resamples variable-rate screencast frames onto a constant timeline", () => {
+  // Frames painted at 0ms, 10ms, 500ms; 1s at 10fps → ticks at 0..900ms.
+  assert.deepEqual(highVideoFrameTimeline([1000, 1010, 1500], 1000, 1000, 10), [0, 1, 1, 1, 1, 2, 2, 2, 2, 2])
+  // Ticks before the first paint show the first frame.
+  assert.deepEqual(highVideoFrameTimeline([1200], 1000, 500, 10), [0, 0, 0, 0, 0])
+  assert.deepEqual(highVideoFrameTimeline([], 0, 1000, 30), [])
+})

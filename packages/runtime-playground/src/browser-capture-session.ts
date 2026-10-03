@@ -5,14 +5,14 @@ import { serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowser
 import type { Browser, Page, Request } from "playwright"
 import { assertPlaywrightBrowserReady } from "./playwright-browser-provenance.js"
 
-export async function launchChromiumBrowser(): Promise<Browser> {
+export async function launchChromiumBrowser(options: { args?: string[] } = {}): Promise<Browser> {
   const { chromium } = await import("playwright")
   await assertPlaywrightBrowserReady()
-  return chromium.launch(
-    process.env.WP_CODEBOX_BROWSER_CHANNEL
-      ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL }
-      : undefined,
-  )
+  const launchOptions = {
+    ...(process.env.WP_CODEBOX_BROWSER_CHANNEL ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL } : {}),
+    ...(options.args?.length ? { args: options.args } : {}),
+  }
+  return chromium.launch(Object.keys(launchOptions).length ? launchOptions : undefined)
 }
 
 export function chromiumBrowserMetadata(browser: Browser): { name: "chromium"; channel: string; version: string } {
