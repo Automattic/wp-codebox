@@ -1,7 +1,8 @@
-import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { access, copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { constants as fsConstants } from "node:fs"
 import { homedir } from "node:os"
 import { spawn } from "node:child_process"
-import { join } from "node:path"
+import { delimiter, join } from "node:path"
 import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_PROBE_PROFILES, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserAdaptiveExplorationContract, browserEnvironment, browserEnvironmentDigest, browserGeolocation, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, transportFaultModel, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserAdaptiveExplorationArtifact, type BrowserAdaptiveExplorationContract, type BrowserEnvironment, type BrowserGeolocationPermissionState, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec, type TransportFaultModel } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
@@ -249,8 +250,8 @@ export async function runBrowserActionsCommand({
         videoCaptureTask = (async () => {
           while (!stopVideoCapture) {
             try {
-              const frame = await page.screenshot({ type: "png", scale: "device", animations: "allow" })
-              await writeFile(join(frameDirectory, `frame-${String(++videoFrameCount).padStart(6, "0")}.png`), frame)
+              const frame = await page.screenshot({ type: "jpeg", quality: 95, scale: "device", animations: "allow" })
+              await writeFile(join(frameDirectory, `frame-${String(++videoFrameCount).padStart(6, "0")}.jpg`), frame)
             } catch (error) {
               if (stopVideoCapture) return
             }
@@ -603,7 +604,12 @@ export async function runBrowserActionsCommand({
         const frames = join(videoStagingDirectory, "frames")
         const output = join(videoStagingDirectory, "high-quality.webm")
         const ffmpeg = await browserFfmpegPath()
-        await runFfmpeg(ffmpeg, ["-y", "-framerate", "10", "-i", join(frames, "frame-%06d.png"), "-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "0", "-crf", "18", "-b:v", "0", "-pix_fmt", "yuv420p", "-an", output])
+        // Frames are piped as MJPEG and encoded as VP8 so the encoder works with
+        // Playwright's bundled minimal ffmpeg (VP8 encoder, image2pipe + mjpeg
+        // decoder only) as well as a full system build. Quality-first settings
+        // replace the realtime recorder's ~1 Mbps warm-up.
+        const frameFiles = (await readdir(frames)).filter((entry) => entry.endsWith(".jpg")).sort().map((entry) => join(frames, entry))
+        await runFfmpeg(ffmpeg, ["-y", "-f", "image2pipe", "-c:v", "mjpeg", "-framerate", "10", "-i", "pipe:0", "-c:v", "libvpx", "-deadline", "good", "-cpu-used", "0", "-crf", "4", "-b:v", "40M", "-qmin", "0", "-qmax", "12", "-pix_fmt", "yuv420p", "-an", output], frameFiles)
         await artifactSession.writeGenerated("video", "video.webm", (path) => copyFile(output, path))
         videoSaved = true
       } catch (error) {
@@ -935,25 +941,38 @@ function browserVideoQualityArg(args: string[]): "default" | "high" {
 }
 
 async function browserFfmpegPath(): Promise<string> {
-  const candidates = [process.env.FFMPEG_PATH, "ffmpeg"].filter((candidate): candidate is string => Boolean(candidate))
+  // Prefer an explicit override, then the ffmpeg Playwright installs next to
+  // its browsers (present wherever video capture already works), then PATH.
+  const candidates = [process.env.FFMPEG_PATH].filter((candidate): candidate is string => Boolean(candidate))
   const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(homedir(), ".cache", "ms-playwright")
-  for (const entry of await readdir(browsersPath).catch(() => [])) {
-    if (entry.startsWith("ffmpeg-")) candidates.push(join(browsersPath, entry, process.platform === "linux" ? "ffmpeg-linux" : process.platform === "darwin" ? "ffmpeg-mac" : "ffmpeg-win64.exe"))
+  const binary = process.platform === "linux" ? "ffmpeg-linux" : process.platform === "darwin" ? "ffmpeg-mac" : "ffmpeg-win64.exe"
+  for (const entry of (await readdir(browsersPath).catch(() => [] as string[])).sort().reverse()) {
+    if (entry.startsWith("ffmpeg-")) candidates.push(join(browsersPath, entry, binary))
+  }
+  for (const directory of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    candidates.push(join(directory, process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg"))
   }
   for (const candidate of candidates) {
-    if (candidate === "ffmpeg") return candidate
-    try { await readFile(candidate); return candidate } catch { /* try next candidate */ }
+    if (await access(candidate, fsConstants.X_OK).then(() => true, () => false)) return candidate
   }
-  throw new Error("High-quality video encoding requires ffmpeg (install it on PATH or set FFMPEG_PATH)")
+  throw new Error("video-quality=high requires ffmpeg: install Playwright's ffmpeg (npx playwright install ffmpeg), put ffmpeg on PATH, or set FFMPEG_PATH")
 }
 
-function runFfmpeg(command: string, args: string[]): Promise<void> {
+function runFfmpeg(command: string, args: string[], stdinFiles: string[] = []): Promise<void> {
   return new Promise((resolve, reject) => {
-    const process = spawn(command, args, { stdio: ["ignore", "ignore", "pipe"] })
+    const child = spawn(command, args, { stdio: ["pipe", "ignore", "pipe"] })
     let stderr = ""
-    process.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString() })
-    process.once("error", reject)
-    process.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with status ${code}: ${stderr.trim()}`)))
+    child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4000) })
+    child.once("error", reject)
+    child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with status ${code}: ${stderr.trim()}`)))
+    child.stdin?.on("error", () => { /* surfaced through the exit status */ })
+    void (async () => {
+      for (const file of stdinFiles) {
+        const chunk = await readFile(file)
+        if (!child.stdin?.write(chunk)) await new Promise((resume) => child.stdin?.once("drain", resume))
+      }
+      child.stdin?.end()
+    })().catch((error) => { child.kill(); reject(error) })
   })
 }
 

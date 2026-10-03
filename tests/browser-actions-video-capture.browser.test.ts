@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises"
 import { createServer } from "node:http"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { spawnSync } from "node:child_process"
@@ -144,9 +144,15 @@ test("browser actions high video quality captures and encodes device-pixel frame
     })
     const recording = join(artifactRoot, "files/browser/video.webm")
     assert((await stat(recording)).size > 0)
-    const decoded = spawnSync("ffmpeg", ["-v", "error", "-i", recording, "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"], { timeout: 30_000 })
-    assert.equal(decoded.status, 0, "encoded high-quality video should decode")
-    assert.deepEqual([decoded.stdout.readUInt32BE(16), decoded.stdout.readUInt32BE(20)], [1080, 1920])
+    // Decode with the same ffmpeg the encoder resolves (Playwright's bundled
+    // build on CI), so the test needs no system ffmpeg. Its stream header
+    // reports the true encoded frame size.
+    const browsers = process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(homedir(), ".cache", "ms-playwright")
+    const bundled = (await readdir(browsers).catch(() => [] as string[])).filter((entry) => entry.startsWith("ffmpeg-")).sort().reverse()
+    const ffmpeg = process.env.FFMPEG_PATH ?? (bundled[0] ? join(browsers, bundled[0], process.platform === "linux" ? "ffmpeg-linux" : process.platform === "darwin" ? "ffmpeg-mac" : "ffmpeg-win64.exe") : "ffmpeg")
+    const decoded = spawnSync(ffmpeg, ["-hide_banner", "-i", recording, "-frames:v", "1", "-c:v", "libvpx", "-f", "webm", "-y", join(artifactRoot, "decoded-probe.webm")], { timeout: 30_000, encoding: "utf8" })
+    assert.equal(decoded.status, 0, `encoded high-quality video should decode: ${decoded.stderr}`)
+    assert.match(decoded.stderr, /Video: vp8[^\n]*\b1080x1920\b/, "video stream is encoded at device pixels")
     const summary = JSON.parse(await readFile(join(artifactRoot, "files/browser/action-summary.json"), "utf8"))
     assert.deepEqual([summary.video.width, summary.video.height], [1080, 1920])
     assert.equal(summary.video.fps, 10)
