@@ -1,4 +1,6 @@
-import { copyFile, readFile, stat, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { spawn } from "node:child_process"
 import { join } from "node:path"
 import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_PROBE_PROFILES, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserAdaptiveExplorationContract, browserEnvironment, browserEnvironmentDigest, browserGeolocation, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, transportFaultModel, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserAdaptiveExplorationArtifact, type BrowserAdaptiveExplorationContract, type BrowserEnvironment, type BrowserGeolocationPermissionState, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec, type TransportFaultModel } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
@@ -49,6 +51,7 @@ export interface BrowserActionsRunPlan {
   networkSettleTimeoutMs: number
   requestedViewport?: { width: number; height: number }
   videoSize?: { width: number; height: number }
+  videoQuality?: "default" | "high"
   requestedEnvironment?: BrowserEnvironment
   authRequest?: { userId: number }
   storageStateImport?: BrowserStorageStateImport
@@ -151,6 +154,11 @@ export async function runBrowserActionsCommand({
   let screenshotSha256: string | undefined
   const videoStagingDirectory = artifactSession.absolutePath("video-source")
   let videoRecording: import("playwright").Video | null = null
+  let videoCaptureTask: Promise<void> | undefined
+  let stopVideoCapture = false
+  let videoFrameCount = 0
+  let videoFrameError: Error | undefined
+  const highVideo = runPlan.videoQuality === "high"
   let videoSaved = false
   let videoCaptureFailed = false
   let videoStartedAt: number | undefined
@@ -222,7 +230,7 @@ export async function runBrowserActionsCommand({
         ...topology.contextOptions(),
         ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
         ...(runPlan.transportFaults ? { serviceWorkers: "block" as const } : {}),
-        ...(capture.has("video") ? { recordVideo: { dir: videoStagingDirectory, ...(browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport) ? { size: browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport) } : {}) } } : {}),
+        ...(capture.has("video") && !highVideo ? { recordVideo: { dir: videoStagingDirectory, ...(browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport) ? { size: browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport) } : {}) } } : {}),
       },
     }) : undefined)
     const context = environmentRuntime?.context ?? null
@@ -232,9 +240,29 @@ export async function runBrowserActionsCommand({
     if (context && runPlan.transportFaults) installedTransportFaults = await installBrowserTransportFaults(context, runPlan.transportFaults, { policy: browserPreviewTransportFaultPolicy(networkPolicy, topology.origins.localProxyOrigin), serviceWorkersBlocked: true })
     const page = activePage = environmentRuntime?.page ?? await browser.newPage()
     if (capture.has("video")) {
-      videoRecording = page.video()
+      if (highVideo) {
+        const viewport = requestedEnvironment.viewport ?? { width: 1280, height: 720 }
+        const scale = requestedEnvironment.deviceScaleFactor ?? 1
+        videoDimensions = { width: Math.round(viewport.width * scale), height: Math.round(viewport.height * scale) }
+        const frameDirectory = join(videoStagingDirectory, "frames")
+        await mkdir(frameDirectory, { recursive: true })
+        videoCaptureTask = (async () => {
+          while (!stopVideoCapture) {
+            try {
+              const frame = await page.screenshot({ type: "png", scale: "device", animations: "allow" })
+              await writeFile(join(frameDirectory, `frame-${String(++videoFrameCount).padStart(6, "0")}.png`), frame)
+            } catch (error) {
+              if (stopVideoCapture) return
+            }
+            const nextFrameAt = (videoRecordingOrigin ?? performance.now()) + videoFrameCount * 100
+            await new Promise((resolve) => setTimeout(resolve, Math.max(0, nextFrameAt - performance.now())))
+          }
+        })()
+      } else {
+        videoRecording = page.video()
+        videoDimensions = browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport) ?? requestedEnvironment.viewport ?? { width: 1280, height: 720 }
+      }
       videoStartedAt = videoRecordingOrigin
-      videoDimensions = browserVideoSize(runPlan.videoSize, requestedEnvironment.viewport) ?? requestedEnvironment.viewport ?? { width: 1280, height: 720 }
     }
     navigationTracker = trackBrowserNavigation(page)
     if (onProgress) {
@@ -557,12 +585,32 @@ export async function runBrowserActionsCommand({
       })
     }
     if (activePage && resolvedEnvironment) environmentEvidence = await observePlaywrightBrowserEnvironment(activePage, requestedEnvironment, resolvedEnvironment).catch(() => environmentEvidence)
+    if (videoCaptureTask) {
+      videoFinishedAt = performance.now()
+      stopVideoCapture = true
+      await videoCaptureTask
+    }
     const cleanupBrowser = session ? { close: async () => {} } : { close: async () => { await environmentRuntime?.close(); await browser.close() } }
     for (const routeError of await closeBrowserAndDrainPreviewRoutes(cleanupBrowser, routeTracker)) {
       errors.push(serializeBrowserError("probe-error", routeError))
       if (browserPreviewCleanupErrorIsFatal(routeError)) pendingError ??= routeError
     }
-    if (videoRecording) {
+    if (videoCaptureTask) {
+      try {
+        videoFinishedAt ??= performance.now()
+        if (videoFrameError) throw videoFrameError
+        if (videoFrameCount === 0) throw new Error("wordpress.browser-actions capture=video-quality=high produced no frames")
+        const frames = join(videoStagingDirectory, "frames")
+        const output = join(videoStagingDirectory, "high-quality.webm")
+        const ffmpeg = await browserFfmpegPath()
+        await runFfmpeg(ffmpeg, ["-y", "-framerate", "10", "-i", join(frames, "frame-%06d.png"), "-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "0", "-crf", "18", "-b:v", "0", "-pix_fmt", "yuv420p", "-an", output])
+        await artifactSession.writeGenerated("video", "video.webm", (path) => copyFile(output, path))
+        videoSaved = true
+      } catch (error) {
+        errors.push(serializeBrowserError("probe-error", error))
+        pendingError ??= error instanceof Error ? error : new Error(String(error))
+      }
+    } else if (videoRecording) {
       // Playwright finalizes a recording on context close and names it itself. The
       // recording is adopted from its staging directory rather than through
       // video.saveAs(), which requires a browser connection that cleanup has closed.
@@ -633,6 +681,7 @@ export async function runBrowserActionsCommand({
       path: "files/browser/video.webm",
       width: videoDimensions?.width ?? 0,
       height: videoDimensions?.height ?? 0,
+      fps: highVideo ? 10 : 30,
       durationMs: Math.max(0, Math.round((videoFinishedAt ?? performance.now()) - (videoStartedAt ?? performance.now()))),
       markers: videoMarkers,
     } : undefined
@@ -866,6 +915,7 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
     requestedViewport: viewportArg(args, "viewport"),
     videoSize: browserVideoSizeArg(args),
+    videoQuality: browserVideoQualityArg(args),
     requestedEnvironment: adaptiveExplorationPlan.requestedEnvironment,
     authRequest: browserAuthRequest(args),
     storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-actions", artifactRoot),
@@ -876,6 +926,35 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     annotationTheme: await browserAnnotationThemeFromArgs(args),
     transportFaults: await transportFaultModelFromArg(args),
   }
+}
+
+function browserVideoQualityArg(args: string[]): "default" | "high" {
+  const value = argValue(args, "video-quality")?.trim() ?? "default"
+  if (value !== "default" && value !== "high") throw new Error("wordpress.browser-actions video-quality must be default or high")
+  return value
+}
+
+async function browserFfmpegPath(): Promise<string> {
+  const candidates = [process.env.FFMPEG_PATH, "ffmpeg"].filter((candidate): candidate is string => Boolean(candidate))
+  const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(homedir(), ".cache", "ms-playwright")
+  for (const entry of await readdir(browsersPath).catch(() => [])) {
+    if (entry.startsWith("ffmpeg-")) candidates.push(join(browsersPath, entry, process.platform === "linux" ? "ffmpeg-linux" : process.platform === "darwin" ? "ffmpeg-mac" : "ffmpeg-win64.exe"))
+  }
+  for (const candidate of candidates) {
+    if (candidate === "ffmpeg") return candidate
+    try { await readFile(candidate); return candidate } catch { /* try next candidate */ }
+  }
+  throw new Error("High-quality video encoding requires ffmpeg (install it on PATH or set FFMPEG_PATH)")
+}
+
+function runFfmpeg(command: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const process = spawn(command, args, { stdio: ["ignore", "ignore", "pipe"] })
+    let stderr = ""
+    process.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString() })
+    process.once("error", reject)
+    process.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with status ${code}: ${stderr.trim()}`)))
+  })
 }
 
 async function browserAnnotationThemeFromArgs(args: string[]): Promise<BrowserAnnotationTheme | undefined> {

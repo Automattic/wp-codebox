@@ -122,6 +122,42 @@ test("browser actions records high-density viewport video without padding", asyn
   }
 })
 
+test("browser actions high video quality captures and encodes device-pixel frames", async () => {
+  const fixture = await pageFixture()
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-video-high-"))
+  try {
+    await runBrowserActionsCommand({
+      artifactRoot,
+      runtimeSpec,
+      server: fixture.server,
+      spec: { command: "wordpress.browser-actions", args: [] },
+      plan: {
+        steps: [{ kind: "navigate", url: fixture.url, waitFor: "load" }, { kind: "waitFor", selector: "#target", marker: "ready" }],
+        capture: new Set(["steps", "video"]),
+        videoQuality: "high",
+        requestedEnvironment: { viewport: { width: 540, height: 960 }, deviceScaleFactor: 2 },
+        stepTimeoutMs: 2_000,
+        totalTimeoutMs: 10_000,
+        networkSettleTimeoutMs: 100,
+        maxDomSnapshotElements: 20,
+      },
+    })
+    const recording = join(artifactRoot, "files/browser/video.webm")
+    assert((await stat(recording)).size > 0)
+    const decoded = spawnSync("ffmpeg", ["-v", "error", "-i", recording, "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"], { timeout: 30_000 })
+    assert.equal(decoded.status, 0, "encoded high-quality video should decode")
+    assert.deepEqual([decoded.stdout.readUInt32BE(16), decoded.stdout.readUInt32BE(20)], [1080, 1920])
+    const summary = JSON.parse(await readFile(join(artifactRoot, "files/browser/action-summary.json"), "utf8"))
+    assert.deepEqual([summary.video.width, summary.video.height], [1080, 1920])
+    assert.equal(summary.video.fps, 10)
+    assert.deepEqual(summary.video.markers.map((marker: { name: string }) => marker.name), ["ready"])
+    assert(summary.video.markers[0].endMs >= summary.video.markers[0].startMs)
+  } finally {
+    await rm(artifactRoot, { recursive: true, force: true })
+    await fixture.close()
+  }
+})
+
 test("browser actions rejects an unsupported capture value", async () => {
   const fixture = await pageFixture()
   const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-video-"))
