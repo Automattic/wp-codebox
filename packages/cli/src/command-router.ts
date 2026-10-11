@@ -28,6 +28,7 @@ const cliCommandRoutes = {
   "run-fuzz-suite": "runFuzzSuite",
   "fuzz-minimize-case": "fuzzMinimizeCase",
   "run-wordpress-workload": "runWordPressWorkload",
+  "wordpress-source": "wordpressSource",
   fuzz: {
     descriptor: "fuzzDescriptor",
     readiness: "fuzzReadiness",

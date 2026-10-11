@@ -11,6 +11,7 @@ import { runMcpRenderClientConfigsCommand } from "./commands/mcp.js"
 import { runPreviewLeaseReleaseCommand, runPreviewLeaseStatusCommand } from "./commands/preview-lease.js"
 import { runBootCommand, runRunCommand, runValidateBlueprintCommand } from "./commands/runtime.js"
 import { runFuzzDescriptorCommand, runFuzzMinimizeCaseCommand, runFuzzReadinessCommand, runFuzzSuiteCommand, runWordPressWorkloadCommand } from "./commands/wordpress-runtime.js"
+import { runWordPressSourceCommand } from "./commands/wordpress-source.js"
 import { runRunsArtifactsCommand, runRunsCancelCommand, runRunsStatusCommand } from "./commands/runs.js"
 import { runTargetProvisionCommand } from "./commands/target.js"
 import { runWorkspacePolicyCheckCommand } from "./commands/workspace-policy.js"
@@ -28,6 +29,7 @@ export async function runCli(args: string[]): Promise<number> {
     runFuzzSuite: runFuzzSuiteCommand,
     fuzzMinimizeCase: runFuzzMinimizeCaseCommand,
     runWordPressWorkload: runWordPressWorkloadCommand,
+    wordpressSource: runWordPressSourceCommand,
     fuzzDescriptor: runFuzzDescriptorCommand,
     fuzzReadiness: runFuzzReadinessCommand,
     adversarialRun: runAdversarialRecipeCommand,

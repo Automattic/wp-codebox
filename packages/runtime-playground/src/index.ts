@@ -13,6 +13,7 @@ export { browserStorageStateCookieHostSummary, browserStorageStateFromWordPressA
 export { createHostCommandTool, type HostCommandToolConfig } from "./host-command-tool.js"
 export { PlaygroundRuntimeBackend, createPlaygroundRuntimeBackend, playgroundRuntimeBackendProvider } from "./playground-runtime.js"
 export { maintainPlaygroundCustomArchiveCache, playgroundWordPressArchiveCacheDirectory, type PlaygroundCustomArchiveCacheMaintenance, type PlaygroundCustomArchiveCacheMaintenanceOptions, type PlaygroundCustomArchiveCachePolicy } from "./playground-wordpress-archive-cache.js"
+export { WORDPRESS_SOURCE_SCHEMA, materializePlaygroundWordPressSource, playgroundWordPressSourceDirectory, type PlaygroundWordPressSource, type PlaygroundWordPressSourceOptions } from "./playground-wordpress-source.js"
 export { collectBrowserArtifactMetrics, collectWordPressEpisodeArtifacts, collectWordPressRuntimeArtifacts, createWordPressEpisode, createWordPressRuntime, runWordPressEpisodeActions, type WordPressEpisodeSpec, type WordPressRuntimeActionHooks, type WordPressRuntimeSpec } from "./public.js"
 export { preflightPhpWasmRuntimeAssets, assertPhpWasmExtensionAbi, phpWasmExtensionMissingAbiSymbols, PhpWasmRuntimeAssetIntegrityError, PhpWasmExtensionAbiError, type PhpWasmRuntimeAssetPreflight, type PhpWasmRuntimeAssetPreflightOptions } from "./php-wasm-preflight.js"
 export { assertPlaywrightBrowserReady, playwrightBrowserProvenance, playwrightBrowserReadiness, type PlaywrightBrowserProvenance, type PlaywrightBrowserReadiness } from "./playwright-browser-provenance.js"

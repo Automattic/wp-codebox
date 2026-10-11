@@ -561,6 +561,7 @@ export function printHelp(): void {
   wp-codebox adversarial replay --recipe <path> --replay <path> [recipe-run options]
   wp-codebox fuzz-minimize-case --input-file <path> [--format=json] [--dry-run]
   wp-codebox run-wordpress-workload --input-file <path> [--format=json] [--dry-run]
+  wp-codebox wordpress-source [--wp <version-query>] [--json]
   wp-codebox run-agent-task --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
   wp-codebox agent-task-run --input-file <path> [--json] [--result-file <path>] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
@@ -674,6 +675,13 @@ Doctor and cleanup:
   --archive-root <dir> Additional archive/cache root to scan for invalid .zip files. Repeatable.
   --run-registry <dir> Run registry checked for active preview leases and recent run heartbeats. Repeatable.
                        Defaults to ./artifacts/runs; additional defaults may be set with WP_CODEBOX_RUN_REGISTRY_ROOTS.
+
+WordPress source:
+  wordpress-source     Resolve --wp (exact version or latest; default latest) through the Playground
+                       archive cache and print the host directory containing WordPress core source
+                       (wp-includes/version.php). Extracted once per version to
+                       <archive cache>/source/<version>/wordpress. --json prints one
+                       wp-codebox/wordpress-source/v1 object; diagnostics go to stderr.
 
 Workspace policy:
   --workspace-root <dir>

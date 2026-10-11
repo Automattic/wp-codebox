@@ -697,6 +697,24 @@ npm run wp-codebox -- schema recipe --json
 
 The schema covers `runtime`, `inputs.mounts`, `inputs.workspaces`, `inputs.extra_plugins`, `inputs.secretEnv`, `workflow.steps`, and `artifacts`.
 
+### `wordpress-source`
+
+Materialize WordPress core source files on the host without booting a site. Tools that load core directly (for example PHP smoke tests that require `wp-includes/html-api/*`) get the same WordPress WP Codebox boots in Playground.
+
+```bash
+npm run wp-codebox -- wordpress-source --wp 7.1.2 --json
+```
+
+`--wp` accepts an exact version such as `7.1.2` or `latest` (the default). The query resolves through the same release resolver and validated archive cache Playground startup uses (`${version}.zip` in `WP_CODEBOX_PLAYGROUND_WORDPRESS_CACHE_DIR`, default `~/.wordpress-playground`). The archive is extracted once per version to `<archive cache>/source/<version>/wordpress`: extraction is staged in a sibling directory, verified against `wp-includes/version.php` (`$wp_version` must equal the resolved version), and renamed into place, so concurrent callers never observe a partial tree. Later calls reuse the verified tree.
+
+Without `--json`, stdout is the source root path only. With `--json`, stdout is exactly one object:
+
+```json
+{"schema":"wp-codebox/wordpress-source/v1","version":"7.1.2","root":"/home/me/.wordpress-playground/source/7.1.2/wordpress","archive":"/home/me/.wordpress-playground/7.1.2.zip","sourceUrl":"https://wordpress.org/wordpress-7.1.2.zip"}
+```
+
+Diagnostics go to stderr. Failures (offline, unknown version, invalid archive) exit non-zero with a message on stderr and no stdout.
+
 ### `run`
 
 Run one command in a disposable runtime.
