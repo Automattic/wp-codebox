@@ -26,11 +26,15 @@ async function main(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "wp-codebox-backend-package-"))
   try {
     const packageDirectory = join(root, "playground-backend")
+    const nativePackageDirectory = join(root, "native-backend")
     await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }))
     await writeFile(join(root, "invalid.js"), "export const notRunCLI = true\n")
     await mkdir(packageDirectory)
     await writeFile(join(packageDirectory, "package.json"), JSON.stringify({ name: "local-playground-backend", version: "1.2.3", type: "module", exports: "./index.js" }))
     await writeFile(join(packageDirectory, "index.js"), "export async function runCLI() { return { php: { requestHandler: {} } } }\n")
+    await mkdir(nativePackageDirectory)
+    await writeFile(join(nativePackageDirectory, "package.json"), JSON.stringify({ name: "local-native-backend", version: "1.2.3", type: "module", exports: "./index.js" }))
+    await writeFile(join(nativePackageDirectory, "index.js"), "export function createNativeRuntimeDriver() { return {} }\n")
 
     const genericSchemaResult = validateWorkspaceRecipeJsonSchema({
       schema: "wp-codebox/workspace-recipe/v1",
@@ -53,10 +57,23 @@ async function main(): Promise<void> {
     assert(typeof (prepared.runtimeBackendContext.cliModule as { runCLI?: unknown }).runCLI === "function", "Expected Playground adapter to expose cliModule.runCLI")
     assert(prepared.provenance.diagnostics.some((diagnostic) => diagnostic.message === "Entrypoint exports runCLI"), "Expected Playground runCLI diagnostic")
 
+    const nativePrepared = await prepareRecipeRuntimeBackendPackage({
+      schema: "wp-codebox/workspace-recipe/v1",
+      runtime: { backend: "wordpress-native", backendPackage: { kind: "native", source: "./native-backend", package: "local-native-backend" } },
+      workflow: { steps: [{ command: "wordpress.run-php" }] },
+    }, root, "wordpress-native")
+    assert(nativePrepared?.runtimeBackendContext.nativeRuntimeDriver !== undefined, "Expected native adapter to expose a runtime driver")
+    assert(nativePrepared?.provenance.diagnostics.some((diagnostic) => diagnostic.message === "Entrypoint exports createNativeRuntimeDriver"), "Expected native driver factory diagnostic")
+
     await assertRejects(() => prepareRecipeRuntimeBackendPackage({
       schema: "wp-codebox/workspace-recipe/v1",
       runtime: { backendPackage: { kind: "playground", source: "./invalid.js" } },
     }, root, "wordpress-playground"), "must export runCLI")
+
+    await assertRejects(() => prepareRecipeRuntimeBackendPackage({
+      schema: "wp-codebox/workspace-recipe/v1",
+      runtime: { backendPackage: { kind: "native", source: "./invalid.js" } },
+    }, root, "wordpress-native"), "must export createNativeRuntimeDriver")
 
     await assertRejects(() => prepareRecipeRuntimeBackendPackage({
       schema: "wp-codebox/workspace-recipe/v1",
