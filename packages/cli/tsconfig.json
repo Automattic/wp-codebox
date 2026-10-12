@@ -7,6 +7,7 @@
   },
   "references": [
     { "path": "../runtime-core" },
+    { "path": "../runtime-native" },
     { "path": "../runtime-playground" }
   ],
   "include": ["src/**/*.ts"]
