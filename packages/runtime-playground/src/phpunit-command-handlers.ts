@@ -1384,9 +1384,12 @@ if ($discovery_only) {
         }
         list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir, $selected_testsuites);
         $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);
+        // Discovery reports what exists. An empty set is a valid answer for a
+        // component whose suite lives outside PHPUnit; the consumer decides
+        // whether zero PHPUnit files is acceptable. Execution still refuses to
+        // run nothing (see discover_tests below).
         if (empty($test_files)) {
             pg_log('NO_TEST_FILES');
-            throw new RuntimeException('PHPUnit discovery found no test files');
         }
         sort($test_files, SORT_STRING);
         $discovery_result = array(

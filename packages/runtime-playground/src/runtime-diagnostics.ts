@@ -116,7 +116,7 @@ export async function readPluginPhpunitDiscoveryResult(server: PlaygroundCliServ
       || typeof value.phpunit_xml !== "string"
       || typeof value.test_root !== "string"
       || !Array.isArray(value.selected_testsuites) || value.selected_testsuites.some((entry) => typeof entry !== "string")
-      || !Array.isArray(value.files) || value.files.length === 0 || value.files.some((entry) => typeof entry !== "string" || entry === "")) {
+      || !Array.isArray(value.files) || value.files.some((entry) => typeof entry !== "string" || entry === "")) {
       return undefined
     }
     return value as PhpunitDiscoveryResult
