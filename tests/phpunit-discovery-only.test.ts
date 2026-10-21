@@ -250,3 +250,76 @@ echo "ok\\n";
     assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
   })
 })
+
+// A component whose suite lives entirely outside PHPUnit (standalone PHP smokes)
+// has no PHPUnit files. Discovery must report that as an empty set; the consumer
+// decides whether zero PHPUnit files is acceptable.
+test("discovery-only reports an empty test root as an empty result", async () => {
+  const code = phpunitRunCode({
+    pluginSlug: "fixture",
+    cwd: "/wordpress/wp-content/plugins/fixture",
+    autoloadFile: "/wp-codebox-vendor/autoload.php",
+    testsDir: "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+    testRoot: "/wordpress/wp-content/plugins/fixture/tests",
+    phpunitXml: "/wordpress/wp-content/plugins/fixture/phpunit.xml.dist",
+    phpunitXmlIsDefault: true,
+    selectedTestFile: "",
+    changedTestFiles: [],
+    discoveryOnly: true,
+    phpunitArgs: [],
+    env: {},
+    wpConfigDefines: {},
+    dependencyMounts: [],
+    bootstrapFiles: [],
+    bootstrapMode: "managed",
+    projectBootstrap: "",
+    multisite: false,
+    databaseType: "sqlite",
+  })
+  const blockStart = code.indexOf("if ($discovery_only) {")
+  const blockEnd = code.indexOf("if (!is_array($wp_config_defines))", blockStart)
+  assert.ok(blockStart >= 0 && blockEnd > blockStart, "expected the discovery-only block")
+  const discoveryBlock = code.slice(blockStart, blockEnd)
+
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-empty-discovery-"))
+  const testsDir = join(tempDir, "tests")
+  mkdirSync(testsDir)
+  writeFileSync(join(testsDir, "profile-smoke.php"), "<?php echo 'standalone smoke';\n")
+  const scriptPath = join(tempDir, "discover.php")
+  writeFileSync(
+    scriptPath,
+    `<?php
+function pg_log($message) { echo $message, "\\n"; }
+function pg_stage_begin($stage) {}
+function pg_stage_ok($stage) {}
+function pg_stage_fail($stage, Throwable $e) { echo 'STAGE_FAIL:', $e->getMessage(), "\\n"; }
+${extractPhpFunction(code, "wp_codebox_phpunit_parse_config")}
+${extractPhpFunction(code, "wp_codebox_phpunit_discover")}
+$discovery_only = true;
+$plugin_slug = 'fixture';
+$test_root = ${phpString(testsDir)};
+$selected_testsuites = array();
+${discoveryBlock.replaceAll(JSON.stringify("/wordpress/wp-content/plugins/fixture/phpunit.xml.dist"), phpString(join(tempDir, "phpunit.xml.dist")))}
+`,
+  )
+  let output = ""
+  try {
+    output = execFileSync("php", [scriptPath], { encoding: "utf8" })
+  } catch (error) {
+    assert.fail(`empty discovery must exit 0: ${(error as { stdout?: string }).stdout ?? error}`)
+  }
+  assert.doesNotMatch(output, /STAGE_FAIL/)
+  const line = output.split("\n").find((entry) => entry.startsWith("DISCOVERY_RESULT_JSON:"))
+  assert.ok(line, `expected a discovery result: ${output}`)
+  assert.deepEqual(JSON.parse(line.slice("DISCOVERY_RESULT_JSON:".length)).files, [])
+
+  const result = await runPhpunitCommand({
+    artifactRoot: "/tmp/artifacts",
+    mounts: [],
+    runPlaygroundCommand: async () => ({ exitCode: 0, errors: "", text: "" }),
+    runtimeSpec: wordpressRuntimeSpec({ commands: ["wordpress.phpunit"] }),
+    server: { playground: { readFileAsText: async () => `${line}\n` } } as never,
+    spec: { command: "wordpress.phpunit", args: ["plugin-slug=fixture", "discovery-only=1"] },
+  })
+  assert.deepEqual(JSON.parse(result).files, [])
+})
