@@ -17,7 +17,7 @@ wp-codebox agent-task-run --input-file=/path/to/request.json --json \
 
 The command reads one JSON request from `--input-file`, writes a single JSON envelope to stdout, and exits non-zero when the normalized result is not successful. Orchestrators should treat stdout JSON as the contract and stderr as diagnostic text only.
 
-Direct `wp-codebox agent-sandbox-run` remains an operator/debug command. Product orchestrators should call `agent-task-run` or the parent-site `wp-codebox/run-agent-task` ability so WP Codebox can build the private recipe, capture artifacts, normalize no-op/failure evidence, and clean up temporary recipe files.
+`wp-codebox.agent-sandbox-run` is a private recipe step, not a CLI command. Product orchestrators call `agent-task-run` or the parent-site `wp-codebox/run-agent-task` ability so WP Codebox can build the private recipe, capture artifacts, normalize no-op/failure evidence, and clean up temporary recipe files.
 
 Named provider stacks, workspace managers, and sandbox backends are implementation
 details behind the Codebox-owned CLI command, ability ids, and `wp-codebox/*`
