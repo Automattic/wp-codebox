@@ -6,6 +6,19 @@ unless this index says otherwise.
 
 ## Current Contracts
 
+- [CLI reference](./cli-reference.md) explains every `wp-codebox` command,
+  its arguments, run lifecycle, and previews.
+- [Artifact bundles](./artifact-bundles.md) describes the bundle layout,
+  verification, and runtime evidence attestation.
+- [Runtime episodes](./runtime-episodes.md) defines the episode record that
+  replays a run.
+- [WordPress plugin](./wordpress-plugin.md) explains the parent-site control
+  plane, browser site operations, and the browser runner.
+- [Host tool registry](./host-tool-registry.md) and
+  [in-sandbox workspace contract](./sandbox-workspace-contract.md) define the
+  agent tool surfaces.
+- [Distribution](./distribution.md) covers release assets, installation, and
+  the release pipeline.
 - [Architecture](./architecture.md) explains the product boundary, package map,
   and ownership rules.
 - [Recipe contract](./recipe-contract.md) is the authoring guide for
