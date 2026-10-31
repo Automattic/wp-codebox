@@ -358,25 +358,18 @@ export function shouldUseProgrammaticPlaygroundRunner(spec: RuntimeCreateSpec, o
 
 async function pluginRuntimeBootstrapSharedMounts(spec: RuntimeCreateSpec, requestWorkerEndpoint?: { route: string; token: string; payloadDirectory: string }): Promise<Array<{ hostPath: string; vfsPath: string }>> {
   const iniEntries = runtimeBootstrapPhpIniEntries(spec)
-  if (!iniEntries && !requestWorkerEndpoint) {
-    return []
-  }
-
   const directory = join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared")
   await mkdir(directory, { recursive: true })
-  if (iniEntries) {
-    await writeFile(join(directory, "php.ini"), phpIniContent(iniEntries), "utf8")
-    await writeFile(join(directory, "wp-codebox-auto-prepend.php"), runtimeAutoPrependPhp(spec), "utf8")
-  }
+  // Mount before PHP initializes so php-wasm's opcache-enabled defaults never apply.
+  await writeFile(join(directory, "php.ini"), phpIniContent(iniEntries ?? {}), "utf8")
+  await writeFile(join(directory, "wp-codebox-auto-prepend.php"), runtimeAutoPrependPhp(spec), "utf8")
   if (requestWorkerEndpoint) await writeFile(join(directory, "request-worker.php"), requestWorkerPhp(requestWorkerEndpoint.token), "utf8")
   const wpConfig = databaseBootstrapWpConfig(spec)
   if (wpConfig) await writeFile(join(directory, "wp-config.php"), wpConfig, "utf8")
 
   return [
-    ...(iniEntries ? [
-      { hostPath: join(directory, "php.ini"), vfsPath: "/internal/shared/php.ini" },
-      { hostPath: join(directory, "wp-codebox-auto-prepend.php"), vfsPath: "/internal/shared/wp-codebox-auto-prepend.php" },
-    ] : []),
+    { hostPath: join(directory, "php.ini"), vfsPath: "/internal/shared/php.ini" },
+    { hostPath: join(directory, "wp-codebox-auto-prepend.php"), vfsPath: "/internal/shared/wp-codebox-auto-prepend.php" },
     ...(requestWorkerEndpoint ? [
       { hostPath: directory, vfsPath: "/internal/wp-codebox" },
       { hostPath: join(directory, "request-worker.php"), vfsPath: `/wordpress${requestWorkerEndpoint.route}` },
@@ -489,7 +482,13 @@ function phpIniContent(entries: Record<string, string>, autoPrependFile = "/inte
     "max_execution_time = 0",
     "max_input_time = -1",
   ]
-  for (const [name, value] of Object.entries(entries)) {
+  // Restoring cached scripts is slower than compiling source in php-wasm.
+  // Merge recipe overrides before serializing so each opcache setting occurs once.
+  for (const [name, value] of Object.entries({
+    "opcache.enable": "0",
+    "opcache.enable_cli": "0",
+    ...entries,
+  })) {
     lines.push(`${name} = ${value}`)
   }
 
