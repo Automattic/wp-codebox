@@ -9,6 +9,7 @@ import { createServer as createHttpServer, type Server as HttpServer } from "nod
 import { mkdir, readFile, rename, rm, stat, unlink, utimes, writeFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
+import { cpus } from "node:os"
 import * as PlaygroundStorage from "@wp-playground/storage"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
 import { phpEnvAssignments, phpLiteral, phpWpConfigDefineAssignments } from "./php-snippets.js"
@@ -54,6 +55,7 @@ export interface PlaygroundCliStartupOptions {
 
 export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: MountSpec[], options: PlaygroundCliStartupOptions = {}): Promise<PlaygroundCliServer> {
   assertRuntimeSecretEnvTargetsAvailable(spec.secretEnvTargets, spec.runtimeEnv ?? {}, distributionEnv(recipeDistribution(spec)?.env))
+  const workers = spec.environment.workers === "auto" ? Math.max(1, cpus().length - 1) : spec.environment.workers ?? 1
   const startedAt = Date.now()
   const emitProgress = (phase: BrowserStartupProgressPhase, status: BrowserStartupProgressStatus, label: string, detail?: Record<string, unknown>) => {
     const event = {
@@ -163,7 +165,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           verbosity: "quiet",
           skipBrowser: true,
           // Mutable runtime state must stay on one VFS unless callers explicitly opt into worker concurrency.
-          workers: spec.environment.workers ?? 1,
+          workers,
           mount: [
             ...postinstallMounts.map((mount) => ({
               hostPath: mount.source,
@@ -200,7 +202,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       fixedPreviewPort: spec.preview?.port ?? null,
     })
 
-    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy({ ...server, ...(requestWorkerEndpoint ? { requestWorkerEndpoint } : {}) }, spec.preview?.port ?? 0, spec.preview?.bind), spec)
+    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy({ ...server, ...(requestWorkerEndpoint ? { requestWorkerEndpoint } : {}) }, spec.preview?.port ?? 0, spec.preview?.bind, workers), spec)
     emitProgress("preview:ready", "complete", "Preview ready", {
       localUrl: proxiedServer.serverUrl,
       upstreamUrl: server.serverUrl,

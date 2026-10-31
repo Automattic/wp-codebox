@@ -31,8 +31,8 @@ export interface PlaygroundCliServer {
 
 export interface PlaygroundPreviewProxyDiagnostics {
   schema: "wp-codebox/preview-proxy-diagnostics/v1"
-  upstreamConcurrency: "serialized"
-  maxConcurrentUpstreamRequests: 1
+  upstreamConcurrency: "serialized" | "bounded"
+  maxConcurrentUpstreamRequests: number
   queue: "fifo"
   bind: string
   targetOrigin: string
@@ -63,10 +63,10 @@ export class PlaygroundPreviewPortUnavailableError extends Error {
   }
 }
 
-export async function withPreviewProxy(server: PlaygroundCliServer, port: number, bind = "127.0.0.1"): Promise<PlaygroundCliServer> {
+export async function withPreviewProxy(server: PlaygroundCliServer, port: number, bind = "127.0.0.1", maxConcurrent = 1): Promise<PlaygroundCliServer> {
   let proxy: PlaygroundPreviewProxy | undefined
   try {
-    proxy = await startPreviewProxy(server.serverUrl, port, bind, server.wordpressUrl)
+    proxy = await startPreviewProxy(server.serverUrl, port, bind, server.wordpressUrl, maxConcurrent)
   } catch (error) {
     await server[Symbol.asyncDispose]()
     throw error
@@ -87,7 +87,7 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
   }
 }
 
-async function startPreviewProxy(targetUrl: string, port: number, bind: string, wordpressUrl?: string): Promise<PlaygroundPreviewProxy> {
+async function startPreviewProxy(targetUrl: string, port: number, bind: string, wordpressUrl: string | undefined, maxConcurrent: number): Promise<PlaygroundPreviewProxy> {
   const target = new URL(targetUrl)
   const wordpressOrigin = {
     declared: Boolean(wordpressUrl),
@@ -95,7 +95,7 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string, 
   }
   const routes = createPreviewRouteRegistry()
   const requestTrace = createPreviewProxyRequestTrace()
-  const upstreamQueue = createPreviewProxyQueue()
+  const upstreamQueue = createPreviewProxyQueue(maxConcurrent)
   const proxy = previewProxyServer(target, wordpressOrigin, routes, requestTrace, upstreamQueue)
   const servers = [proxy]
 
@@ -124,8 +124,8 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string, 
     diagnostics() {
       return {
         schema: "wp-codebox/preview-proxy-diagnostics/v1",
-        upstreamConcurrency: "serialized",
-        maxConcurrentUpstreamRequests: 1,
+        upstreamConcurrency: maxConcurrent === 1 ? "serialized" : "bounded",
+        maxConcurrentUpstreamRequests: maxConcurrent,
         queue: "fifo",
         bind,
         targetOrigin: target.origin,
@@ -357,13 +357,16 @@ function previewProxyRequestTarget(incoming: IncomingMessage, target: URL): Prev
   return { upstreamHost: target.host, visibleHost: authority.host, path: rawUrl, port: authority.port || "80", protocol: "http:", rewriteTargetOrigin: true }
 }
 
-function createPreviewProxyQueue(): (
+function createPreviewProxyQueue(maxConcurrent: number): (
   task: () => Promise<void>,
   isCanceled: () => boolean,
   observeCancellation: (cancel: () => void) => () => void,
   onCanceledBeforeRun: () => void,
 ) => Promise<void> {
-  let active = false
+  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1) {
+    throw new RangeError("Preview proxy concurrency must be a positive integer")
+  }
+  let active = 0
   interface PendingRequest {
     task: () => Promise<void>
     isCanceled: () => boolean
@@ -386,7 +389,7 @@ function createPreviewProxyQueue(): (
       next.resolve()
       next = pending.shift()
     }
-    active = false
+    active -= 1
   }
 
   function run(request: PendingRequest): void {
@@ -429,12 +432,12 @@ function createPreviewProxyQueue(): (
     }
     request.stopObservingCancellation = observeCancellation(cancel)
 
-    if (active) {
+    if (active >= maxConcurrent) {
       pending.push(request)
       return
     }
 
-    active = true
+    active += 1
     run(request)
   })
 }

@@ -431,6 +431,88 @@ try {
   await closeHttpServer(queuedTargetServer)
 }
 
+// Hold upstream responses open so overlap and slot release do not depend on timings.
+const boundedRequests: string[] = []
+const boundedResponses = new Map<string, import("node:http").ServerResponse>()
+let boundedActive = 0
+let boundedMaxActive = 0
+const boundedTarget = createServer((request, response) => {
+  const path = request.url ?? ""
+  boundedRequests.push(path)
+  boundedResponses.set(path, response)
+  boundedActive += 1
+  boundedMaxActive = Math.max(boundedMaxActive, boundedActive)
+  response.once("close", () => { boundedActive -= 1 })
+})
+const boundedTargetUrl = await listenLocalHttpServer(boundedTarget)
+const boundedProxy = await withPreviewProxy({
+  playground: { async run() { return { text: "" } } },
+  serverUrl: boundedTargetUrl,
+  async [Symbol.asyncDispose]() {},
+} satisfies PlaygroundCliServer, 0, "127.0.0.1", 3)
+const boundedControllers: AbortController[] = []
+const boundedFetch = (path: string) => {
+  const controller = new AbortController()
+  boundedControllers.push(controller)
+  return fetch(`${boundedProxy.serverUrl}${path}`, { signal: controller.signal })
+    .then((response) => response.text()).catch(() => "canceled-or-failed")
+}
+const awaitBounded = async (condition: () => boolean) => {
+  for (let attempt = 0; attempt < 100 && !condition(); attempt += 1) {
+    await wait(10)
+  }
+  assert.ok(condition(), "bounded proxy request did not reach the expected state")
+}
+const boundedArrivals: string[] = []
+const stopObservingBounded = boundedProxy.previewRoutes?.add((request) => {
+  boundedArrivals.push(request.url ?? "")
+  return false
+})
+try {
+  assert.equal(boundedProxy.previewProxyDiagnostics?.upstreamConcurrency, "bounded")
+  assert.equal(boundedProxy.previewProxyDiagnostics?.maxConcurrentUpstreamRequests, 3)
+  const first = boundedFetch("/one")
+  const second = boundedFetch("/two")
+  const third = boundedFetch("/three")
+  await awaitBounded(() => boundedRequests.length === 3)
+  assert.equal(boundedActive, 3, "three upstream responses must overlap")
+
+  const fourth = boundedFetch("/four")
+  await awaitBounded(() => boundedArrivals.includes("/four"))
+  const fifth = boundedFetch("/five")
+  await awaitBounded(() => boundedArrivals.includes("/five"))
+  await wait(30)
+  assert.equal(boundedRequests.length, 3, "requests beyond the limit must wait")
+
+  boundedResponses.get("/one")!.end("one")
+  assert.equal(await first, "one")
+  await awaitBounded(() => boundedRequests.length === 4)
+  assert.equal(boundedRequests[3], "/four", "waiting requests run in FIFO order")
+
+  boundedControllers[1]!.abort()
+  await second
+  await awaitBounded(() => boundedRequests.length === 5)
+  assert.equal(boundedRequests[4], "/five", "aborting an active request releases one of the bounded slots")
+
+  const sixth = boundedFetch("/six")
+  await awaitBounded(() => boundedArrivals.includes("/six"))
+  boundedResponses.get("/three")!.destroy()
+  await third
+  await awaitBounded(() => boundedRequests.length === 6)
+  assert.equal(boundedRequests[5], "/six", "an upstream error releases its slot")
+  assert.equal(boundedMaxActive, 3, "the proxy must never exceed its upstream limit")
+  for (const path of ["/four", "/five", "/six"]) {
+    boundedResponses.get(path)!.end(path)
+  }
+  assert.deepEqual(await Promise.all([fourth, fifth, sixth]), ["/four", "/five", "/six"])
+} finally {
+  stopObservingBounded?.()
+  for (const controller of boundedControllers) controller.abort()
+  for (const response of boundedResponses.values()) response.destroy()
+  await boundedProxy[Symbol.asyncDispose]()
+  await closeHttpServer(boundedTarget)
+}
+
 const phase = materializationPhaseResult({
   phase: "persist-browser-artifacts",
   status: "completed",
