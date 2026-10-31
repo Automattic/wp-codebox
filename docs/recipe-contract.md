@@ -75,6 +75,25 @@ Raw Playground-oriented fields such as `runtime.blueprint`, `runtime.phpVersion`
 compatibility fields. Prefer the neutral `wordpress` backend and recipe inputs
 for new runtime setup where possible.
 
+## Playground PHP bootstrap settings
+
+Playground disables opcache by default (`opcache.enable = 0` and
+`opcache.enable_cli = 0`) in a `php.ini` mounted before PHP initializes. The
+php-wasm file cache is slower than compiling scripts from source. To opt back
+in, set `inputs.pluginRuntime.php.bootstrapIniEntries`, for example:
+
+```json
+{
+  "opcache.enable": "1",
+  "opcache.enable_cli": "1",
+  "opcache.file_cache": "/tmp/opcache"
+}
+```
+
+Recipe bootstrap entries override these defaults. Use `bootstrapIniEntries`,
+not runtime `iniEntries`, for opcache settings that must apply at PHP startup.
+The defaults do not affect the choice of Playground runner.
+
 ## Stable Field Names
 
 Recipe field names are case-sensitive. The current recipe schema accepts these

@@ -54,7 +54,7 @@ try {
           pluginRuntime: {
             php: {
               iniEntries: { memory_limit: "512M" },
-              bootstrapIniEntries: { "opcache.file_cache": "/tmp/opcache" },
+              bootstrapIniEntries: { "opcache.enable_cli": "1", "opcache.file_cache": "/tmp/opcache" },
             },
           },
         },
@@ -110,6 +110,8 @@ try {
   assert.equal(typeof sharedAutoPrependPath, "string")
   const sharedPhpIni = await readFile(sharedPhpIniPath as string, "utf8")
   assert.match(sharedPhpIni, /opcache\.file_cache = \/tmp\/opcache/)
+  assert.deepEqual(sharedPhpIni.match(/^opcache\.enable_cli = .*$/gm), ["opcache.enable_cli = 1"], "recipe override is the only serialized value")
+  assert.match(sharedPhpIni, /^opcache\.enable = 0$/m)
   // The runtime default memory ceiling stays high enough for collect_artifacts to
   // base64 heavy snapshot/declared-artifact files without a hard PHP fatal.
   assert.match(sharedPhpIni, /memory_limit=512M/)
@@ -217,12 +219,40 @@ try {
   await downloadedWordPressServer[Symbol.asyncDispose]()
 
   assert.equal(calls.length, 1)
-  assert.equal(calls[0]["mount-before-install"]?.length, 2)
-  assert.equal(calls[0]["mount-before-install"]?.[0]?.vfsPath, "/internal/wp-codebox")
-  assert.match(calls[0]["mount-before-install"]?.[1]?.vfsPath ?? "", /^\/wordpress\/wp-codebox-execute-[a-f0-9]{24}\.php$/)
+  assert.equal(calls[0]["mount-before-install"]?.length, 4)
+  assert.equal(calls[0]["mount-before-install"]?.[0]?.vfsPath, "/internal/shared/php.ini")
+  assert.equal(calls[0]["mount-before-install"]?.[1]?.vfsPath, "/internal/shared/wp-codebox-auto-prepend.php")
+  assert.equal(calls[0]["mount-before-install"]?.[2]?.vfsPath, "/internal/wp-codebox")
+  assert.match(calls[0]["mount-before-install"]?.[3]?.vfsPath ?? "", /^\/wordpress\/wp-codebox-execute-[a-f0-9]{24}\.php$/)
   assert.equal(calls[0].wordpressInstallMode, undefined)
   assert.equal(calls[0].workers, 1)
   assert.equal(shouldUseProgrammaticPlaygroundRunner(downloadedWordPressSpec), false)
+
+  // No pluginRuntime, extensions, or auto-prepend body: defaults must still be
+  // mounted without causing a mounted WordPress source to select the programmatic runner.
+  calls.length = 0
+  const plainSpec: RuntimeCreateSpec = {
+    ...defaultRuntimeIniSpec,
+    environment: { ...defaultRuntimeIniSpec.environment, extensions: undefined },
+    runtimeEnv: undefined,
+    secretEnv: undefined,
+    secretEnvTargets: undefined,
+  }
+  assert.equal(shouldUseProgrammaticPlaygroundRunner(plainSpec), false)
+  assert.equal(shouldUseProgrammaticPlaygroundRunner({
+    ...plainSpec,
+    metadata: spec.metadata,
+  }), true, "explicit bootstrap entries still select the programmatic runner")
+  const plainServer = await startPlaygroundCliServer(plainSpec, [], { cliModule })
+  await plainServer[Symbol.asyncDispose]()
+  const plainIniMount = calls[0]["mount-before-install"]?.find((mount) => mount.vfsPath === "/internal/shared/php.ini")
+  assert.ok(plainIniMount, "default php.ini is mounted before install")
+  const plainIni = await readFile(plainIniMount.hostPath, "utf8")
+  assert.match(plainIni, /^opcache\.enable = 0$/m)
+  assert.match(plainIni, /^opcache\.enable_cli = 0$/m)
+  const plainAutoPrependMount = calls[0]["mount-before-install"]?.find((mount) => mount.vfsPath === "/internal/shared/wp-codebox-auto-prepend.php")
+  assert.ok(plainAutoPrependMount)
+  assert.match(await readFile(plainAutoPrependMount.hostPath, "utf8"), /require_once '\/internal\/shared\/auto_prepend_file\.php'/)
 
   calls.length = 0
   const unmanagedInstallServer = await startPlaygroundCliServer({
