@@ -115,6 +115,7 @@ async function buildDoctorOutput(options: DoctorOptions): Promise<DoctorOutput> 
   const checks = [
     { id: "node", status: "ok" as const, message: "node is available", details: { path: process.execPath, version: process.version } },
     await commandToolCheck("npm", ["--version"]),
+    await nativeDockerCheck(),
     await binaryCheck(),
     await sourceCheck(),
     await staleRecipeRunCheck(options),
@@ -135,6 +136,11 @@ async function buildDoctorOutput(options: DoctorOptions): Promise<DoctorOutput> 
     checks,
     summary,
   }
+}
+
+async function nativeDockerCheck(): Promise<HealthCheck> {
+  const check = await commandToolCheck("docker", ["info", "--format", "{{.ServerVersion}}"])
+  return { ...check, id: "wordpress-native.docker", status: check.status === "ok" ? "ok" : "warning", message: check.status === "ok" ? "Docker is available for wordpress-native" : "Optional wordpress-native backend requires a running Docker daemon" }
 }
 
 async function tempRuntimeCheck(options: DoctorOptions): Promise<HealthCheck> {

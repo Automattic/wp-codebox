@@ -111,6 +111,10 @@ export async function prepareRecipeRuntimeBackendPackage(recipe: WorkspaceRecipe
     return undefined
   }
 
+  if (normalizeRuntimeBackendKind(backendKind) === "wordpress-native") {
+    throw backendPackageError(backendPackage, "wordpress-native uses a Docker image, not runtime.backendPackage")
+  }
+
   const resolvedSource = resolve(recipeDirectory, backendPackage.source)
   const sourceStat = await statBackendSource(backendPackage, resolvedSource)
   const packageRoot = sourceStat.isDirectory() ? resolvedSource : dirname(resolvedSource)

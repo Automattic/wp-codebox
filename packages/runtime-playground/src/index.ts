@@ -28,3 +28,4 @@ export { applyVfsMountSnapshots, materializePlaygroundMountsFromVfs, type HostMo
 export { buildReplayExportBlueprint, buildReplayableWordPressSiteBlueprint, buildReplayableWordPressSiteLimitations, writeReplayExportPackage, writeReplayableWordPressSiteBundle, type ReplayExportPackage, type ReplayExportPackageOptions, type ReplayableWordPressSiteBundle, type ReplayableWordPressSiteBundleManifest, type ReplayableWordPressSiteBundleOptions } from "./replayable-wordpress-site-bundle.js"
 export { RUNTIME_CAPTURE_STATUS_SCHEMA, runtimeCaptureStatus, type RuntimeCaptureDiagnostic, type RuntimeCaptureState, type RuntimeCaptureStatus, type RuntimeCaptureStatusInput } from "./runtime-capture-status.js"
 export type { RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
+export { NativeRuntime, nativeRuntimeBackendProvider } from "./native-runtime.js"
