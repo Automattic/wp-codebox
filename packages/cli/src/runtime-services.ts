@@ -111,6 +111,8 @@ export interface RuntimeServiceDependencies {
   verifyNativeFilesystem?: (root: string, datadir: string) => Promise<void>
   request?: (url: string, options: { method: "GET" | "DELETE"; signal?: AbortSignal }) => Promise<{ status: number; body?: string }>
   nativeIdentity?: () => NativeMariaDbHostIdentity
+  /** Ordered candidate bases for the owned native root; defaults to [os.tmpdir(), "/tmp"]. */
+  nativeRootBases?: readonly string[]
 }
 
 export interface RuntimeServiceProvider {
@@ -372,6 +374,15 @@ function providerUnavailableDiagnostic(error: unknown, command: string): Runtime
 }
 
 const NATIVE_MARIADB_ROOT_PREFIX = "wp-codebox-mariadb-"
+// mkdtemp() replaces the template with exactly six random characters.
+const NATIVE_MARIADB_ROOT_SUFFIX_LENGTH = 6
+const NATIVE_MARIADB_SOCKET_SEGMENTS = ["storage", "runtime", "server.sock"] as const
+// Unix-domain socket paths must fit sun_path: 108 bytes on Linux and 104 on
+// macOS/BSD, including the terminating NUL. Keep a margin below both.
+export const NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES = 100
+// Short, conventional fallback base used only when the caller's TMPDIR would
+// push the server socket past the sun_path limit.
+const NATIVE_MARIADB_FALLBACK_ROOT_BASE = "/tmp"
 const NATIVE_MARIADB_START_ATTEMPTS = 5
 const NATIVE_MARIADB_START_TIMEOUT_MS = 30_000
 const NATIVE_MARIADB_PROCESS_OUTPUT_LIMIT_BYTES = 256 * 1024
@@ -434,6 +445,14 @@ interface OwnedNativeProcess {
   identityReady: Promise<void>
 }
 
+export class NativeMariaDbSocketPathError extends Error {
+  readonly reason = "socket-path-too-long"
+  constructor(message: string) {
+    super(message)
+    this.name = "NativeMariaDbSocketPathError"
+  }
+}
+
 interface OwnedNativeRoot {
   path: string
   device: number
@@ -486,7 +505,7 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
     const binaries = await resolveNativeMariaDbBinaries(dependencies, signal)
     binariesForCleanup = binaries
     evidence.version = binaries.version
-    root = await createOwnedNativeRoot()
+    root = await createOwnedNativeRoot(dependencies.nativeRootBases)
     const storageRoot = ownedNativePath(root, "storage")
     await mkdir(storageRoot, { mode: 0o700 })
     const storageEnvironment = nativeMariaDbEnvironment(root.path)
@@ -501,6 +520,7 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
     const secureFileDirectory = join(storageRoot, "files")
     for (const directory of [datadir, runtimeDirectory, temporaryDirectory, pluginDirectory, secureFileDirectory]) await mkdir(directory, { mode: 0o700 })
     const socket = join(runtimeDirectory, "server.sock")
+    assertNativeMariaDbSocketPath(socket)
     adminSocket = socket
     const pidFile = join(runtimeDirectory, "server.pid")
     const logFile = join(runtimeDirectory, "server.log")
@@ -591,7 +611,10 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
     try { await cleanup() } catch (caught) { cleanupError = caught }
     evidence.readiness = "failed"
     evidence.lifecycle = "failed"
-    evidence.diagnostic = evidence.teardown === "failed" ? { code: "teardown-failed" } : diagnostic
+    const socketPathError = nativeMariaDbSocketPathErrorFrom(error)
+    evidence.diagnostic = evidence.teardown === "failed"
+      ? { code: "teardown-failed" }
+      : socketPathError ? { ...diagnostic, cause: { code: socketPathError.reason, message: socketPathError.message } } : diagnostic
     throw new RuntimeServiceProvisionError(`Managed runtime service failed: ${service.id}`, evidenceList, { cause: cleanupError ?? error })
   }
 }
@@ -643,7 +666,8 @@ async function probeNativeMariaDbHostReadiness(dependencies: RuntimeServiceDepen
       await retained.release()
       state.retained = undefined
       if (signal?.aborted) return { status: "unavailable", reason: "containment-probe-interrupted" }
-      return retained.evidence.readiness === "ready" ? { status: "ready" } : { status: "unavailable", reason: "bounded-filesystem-unavailable" }
+      if (retained.evidence.readiness === "ready") return { status: "ready" }
+      return { status: "unavailable", reason: retained.evidence.diagnostic?.cause?.code === "socket-path-too-long" ? "socket-path-too-long" : "bounded-filesystem-unavailable" }
     } catch {
       return { status: "unavailable", reason: "containment-probe-cleanup-failed" }
     }
@@ -687,6 +711,7 @@ async function probeNativeMariaDbHostReadiness(dependencies: RuntimeServiceDepen
     }
     state.retained = undefined
     if (signal?.aborted) return { status: "unavailable", reason: "containment-probe-interrupted" }
+    if (nativeMariaDbSocketPathErrorFrom(error) || evidence.some((entry) => entry.diagnostic?.cause?.code === "socket-path-too-long")) return { status: "unavailable", reason: "socket-path-too-long" }
     return { status: "unavailable", reason: "bounded-filesystem-unavailable" }
   }
 }
@@ -997,8 +1022,58 @@ async function nativeExecutableIsTrusted(path: string): Promise<boolean> {
   }
 }
 
-async function createOwnedNativeRoot(): Promise<OwnedNativeRoot> {
-  const temporaryRoot = await realpath(tmpdir())
+/**
+ * Byte length of the MariaDB server socket path for an owned root created
+ * under `base` (after mkdtemp fills in its random suffix).
+ */
+export function nativeMariaDbSocketPathBytes(base: string): number {
+  return Buffer.byteLength(join(base, `${NATIVE_MARIADB_ROOT_PREFIX}${"X".repeat(NATIVE_MARIADB_ROOT_SUFFIX_LENGTH)}`, ...NATIVE_MARIADB_SOCKET_SEGMENTS))
+}
+
+export function assertNativeMariaDbSocketPath(socket: string): void {
+  const bytes = Buffer.byteLength(socket)
+  if (bytes > NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES) {
+    throw new NativeMariaDbSocketPathError(`Native MariaDB socket path is ${bytes} bytes; the Unix-domain socket limit is ${NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES} bytes`)
+  }
+}
+
+/**
+ * Pick the canonical base directory for the owned native root. The caller's
+ * TMPDIR is preferred; when its canonical path is too long for the server's
+ * Unix-domain socket, fall back to the short system temporary directory. The
+ * selected base only changes where mkdtemp() runs: the private 0700 root and
+ * every realpath/lstat ownership proof are applied identically afterwards.
+ */
+export async function selectNativeMariaDbRootBase(candidates: readonly string[] = [tmpdir(), NATIVE_MARIADB_FALLBACK_ROOT_BASE]): Promise<string> {
+  // Only byte counts are reported: evidence must never carry private absolute paths.
+  const rejectedBytes: number[] = []
+  for (const candidate of candidates) {
+    let canonical: string
+    try {
+      canonical = await realpath(candidate)
+    } catch {
+      continue
+    }
+    const bytes = nativeMariaDbSocketPathBytes(canonical)
+    if (bytes <= NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES) return canonical
+    rejectedBytes.push(bytes)
+  }
+  throw new NativeMariaDbSocketPathError(rejectedBytes.length > 0
+    ? `Native MariaDB socket path would be ${rejectedBytes.join("/")} bytes under the available temporary bases; the Unix-domain socket limit is ${NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES} bytes`
+    : `Native MariaDB found no temporary base that keeps its socket path within ${NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES} bytes`)
+}
+
+function nativeMariaDbSocketPathErrorFrom(error: unknown): NativeMariaDbSocketPathError | undefined {
+  let current = error
+  for (let depth = 0; current && depth < 8; depth += 1) {
+    if (current instanceof NativeMariaDbSocketPathError) return current
+    current = current instanceof Error ? current.cause : undefined
+  }
+  return undefined
+}
+
+async function createOwnedNativeRoot(baseCandidates?: readonly string[]): Promise<OwnedNativeRoot> {
+  const temporaryRoot = await selectNativeMariaDbRootBase(baseCandidates)
   const path = await mkdtemp(join(temporaryRoot, NATIVE_MARIADB_ROOT_PREFIX))
   await chmod(path, 0o700)
   const canonical = await realpath(path)

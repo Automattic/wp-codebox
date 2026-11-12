@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
 import { EventEmitter, getEventListeners } from "node:events"
-import { chmod, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { tmpdir, userInfo } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { runRuntimeDescriptorCommand, RuntimeDescriptorInterruptedError, withRuntimeDescriptorInterruption } from "../packages/cli/src/commands/discovery.ts"
-import { abortableDelay, assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbFilesystemOwnership, assertNativeMariaDbMountInfo, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, settleNativeMariaDbHostReadiness, type NativeMariaDbHostIdentity, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { abortableDelay, assertNativeMariaDbEngines, assertNativeMariaDbSocketPath, NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES, NativeMariaDbSocketPathError, nativeMariaDbSocketPathBytes, selectNativeMariaDbRootBase, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbFilesystemOwnership, assertNativeMariaDbMountInfo, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, settleNativeMariaDbHostReadiness, type NativeMariaDbHostIdentity, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { playwrightBrowserReadiness } from "../packages/runtime-playground/src/playwright-browser-provenance.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
@@ -206,6 +206,62 @@ process.exit(1);
   assert.deepEqual(await nativeMariaDbHostReadiness(interruptedDependencies, descriptorAbort.signal), { status: "unavailable", reason: "containment-probe-interrupted" })
   await settleNativeMariaDbHostReadiness(interruptedDependencies)
   assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !interruptedRoots.has(name)), [], "interrupted descriptor discovery releases all native roots")
+
+  // Socket path selection: a long TMPDIR must not push <root>/storage/runtime/server.sock past sun_path.
+  assert.equal(nativeMariaDbSocketPathBytes("/tmp"), Buffer.byteLength("/tmp/wp-codebox-mariadb-XXXXXX/storage/runtime/server.sock"))
+  assert.doesNotThrow(() => assertNativeMariaDbSocketPath(`/${"s".repeat(NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES - 1)}`))
+  assert.throws(() => assertNativeMariaDbSocketPath(`/${"s".repeat(NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES)}`), (error: unknown) => error instanceof NativeMariaDbSocketPathError && error.reason === "socket-path-too-long")
+  const shortBase = await realpath(await mkdtemp(join("/tmp", "wpcb-sock-")))
+  try {
+    const longBase = join(fixture, "homeboy-run-df70bf63-6e8d-4494-a0e6-27a2706a628d-1794495483671992580", "runtime", "tmp")
+    await mkdir(longBase, { recursive: true, mode: 0o700 })
+    const canonicalLongBase = await realpath(longBase)
+    assert.ok(nativeMariaDbSocketPathBytes(canonicalLongBase) > NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES, "fixture base must be long enough to overflow the socket path")
+    assert.ok(nativeMariaDbSocketPathBytes(shortBase) <= NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES)
+    const shortAlias = join(shortBase, "l")
+    await symlink(canonicalLongBase, shortAlias)
+    assert.equal(await selectNativeMariaDbRootBase([shortBase]), shortBase, "a short TMPDIR is used unchanged")
+    assert.equal(await selectNativeMariaDbRootBase([longBase, shortBase]), shortBase, "a long TMPDIR falls back to the short base")
+    assert.equal(await selectNativeMariaDbRootBase([shortAlias, shortBase]), shortBase, "length is measured on the canonical path, not a short symlink alias")
+    assert.equal(await selectNativeMariaDbRootBase([join(shortBase, "missing"), shortBase]), shortBase, "unavailable candidates are skipped")
+    await assert.rejects(selectNativeMariaDbRootBase([longBase]), (error: unknown) => error instanceof NativeMariaDbSocketPathError && error.reason === "socket-path-too-long" && error.message.includes(`${nativeMariaDbSocketPathBytes(canonicalLongBase)} bytes`) && !error.message.includes(fixture), "the error reports byte counts without private paths")
+    await assert.rejects(selectNativeMariaDbRootBase([join(shortBase, "missing")]), NativeMariaDbSocketPathError)
+
+    const fallbackCallsStart = calls.length
+    const fallback = await provisionRuntimeServices([service], { dependencies: { ...dependencies, nativeRootBases: [longBase, shortBase] } })
+    try {
+      assert.equal(fallback.evidence[0]?.readiness, "ready", "long TMPDIR provisions through the short fallback base")
+      const sockets = calls.slice(fallbackCallsStart).flatMap((call) => call.args).filter((arg) => arg.startsWith("--socket=")).map((arg) => arg.slice("--socket=".length))
+      assert.ok(sockets.length > 0)
+      for (const socket of sockets) {
+        assert.ok(socket.startsWith(`${shortBase}/wp-codebox-mariadb-`), "the owned root lives under the short base")
+        assert.ok(Buffer.byteLength(socket) <= NATIVE_MARIADB_SOCKET_PATH_LIMIT_BYTES)
+      }
+      const fallbackRoot = dirname(dirname(dirname(sockets[0]!)))
+      const fallbackRootMetadata = await lstat(fallbackRoot)
+      assert.ok(fallbackRootMetadata.isDirectory() && !fallbackRootMetadata.isSymbolicLink())
+      assert.equal(fallbackRootMetadata.mode & 0o777, 0o700, "the fallback root keeps the private 0700 mode")
+      assert.equal(await realpath(fallbackRoot), fallbackRoot, "the fallback root is canonical")
+      assert.deepEqual(await readdir(longBase), [], "nothing is allocated under the rejected long base")
+    } finally {
+      await fallback.release()
+    }
+    assert.deepEqual((await readdir(shortBase)).filter((name) => name.startsWith("wp-codebox-mariadb-")), [], "fallback root is removed on release")
+
+    await assert.rejects(provisionRuntimeServices([service], { dependencies: { ...dependencies, nativeRootBases: [longBase] } }), (error: unknown) => {
+      assert.ok(error instanceof RuntimeServiceProvisionError)
+      assert.equal(error.evidence[0]?.readiness, "failed")
+      assert.equal(error.evidence[0]?.diagnostic?.code, "provision-failed")
+      assert.equal(error.evidence[0]?.diagnostic?.cause?.code, "socket-path-too-long")
+      assert.equal(JSON.stringify(error.evidence).includes(fixture), false, "evidence never carries private absolute paths")
+      return true
+    })
+    assert.deepEqual(await readdir(longBase), [], "an overlong socket path allocates no private root")
+    assert.deepEqual(await nativeMariaDbHostReadiness({ ...dependencies, nativeRootBases: [longBase] }), { status: "unavailable", reason: "socket-path-too-long" }, "readiness surfaces the socket path cause")
+    assert.deepEqual(await nativeMariaDbHostReadiness({ ...dependencies, nativeRootBases: [longBase, shortBase] }), { status: "ready" })
+  } finally {
+    await rm(shortBase, { recursive: true, force: true })
+  }
 
   const signalTarget = new EventEmitter()
   const interruptedDescriptor = withRuntimeDescriptorInterruption(async (signal) => await new Promise<boolean>((resolve) => signal.addEventListener("abort", () => resolve(signal.aborted), { once: true })), signalTarget, 10_000)
