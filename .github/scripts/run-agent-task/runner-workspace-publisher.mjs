@@ -2,6 +2,34 @@
 function string(value) { return typeof value === "string" ? value.trim() : "" }
 function record(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {} }
 
+// The publication head branch. An explicit `branch` (or `head_branch`) is the
+// caller's branch and is used exactly as given. Otherwise the head is
+// `branch_prefix` + run id, joined with a `-` unless the prefix already ends in a
+// separator (`/`, `-`, `_`, `.`), so a prefix such as `docs/upkeep` yields
+// `docs/upkeep-run-1` rather than `docs/upkeeprun-1`. The base-SHA fresh-branch
+// rule appends `-<base-sha-12>` to whichever head this returns.
+export function publicationHeadBranch(config, request = {}) {
+  const explicit = string(config.branch) || string(config.head_branch)
+  if (explicit) return { prefix: "", head: explicit }
+  const prefix = string(config.branch_prefix || "wp-codebox/agent-task/")
+  const runId = string(config.run_id || request.workload?.id || "agent-task").replace(/[^A-Za-z0-9._/-]+/g, "-")
+  const separator = !prefix || /[/_.-]$/.test(prefix) ? "" : "-"
+  return { prefix, head: `${prefix}${separator}${runId}` }
+}
+
+// Pull request body: the caller's body plus a reviewer-facing list of the
+// files this publication changed.
+export function publicationPullBody(config, publicationFiles) {
+  const callerBody = string(config.body)
+  const files = (Array.isArray(publicationFiles) ? publicationFiles : [])
+    .map((file) => ({ path: string(file?.path), deleted: Boolean(file?.deleted) }))
+    .filter((file) => file.path)
+  if (!files.length) return callerBody
+  const shown = files.slice(0, 100).map((file) => `- \`${file.path}\`${file.deleted ? " (deleted)" : ""}`)
+  if (files.length > shown.length) shown.push(`- …and ${files.length - shown.length} more`)
+  return [callerBody, `### Changed files (${files.length})\n\n${shown.join("\n")}`].filter(Boolean).join("\n\n")
+}
+
 export async function publishRunnerWorkspace({ request, changedFiles, publicationFiles, workspace, token, fetchImpl = fetch }) {
   const targetRepo = string(request.target_repo).toLowerCase()
   const config = record(request.runner_workspace)
@@ -11,9 +39,7 @@ export async function publishRunnerWorkspace({ request, changedFiles, publicatio
   if (!targetRepo || targetRepo !== configuredRepo || !allowed.includes(targetRepo)) throw new Error("Runner workspace publication repository is not authorized.")
   let base = string(config.base) || string(config.base_branch)
   const hasConfiguredBase = Boolean(base)
-  const prefix = string(config.branch_prefix || "wp-codebox/agent-task/")
-  const runId = string(config.run_id || request.workload?.id || "agent-task").replace(/[^A-Za-z0-9._/-]+/g, "-")
-  const configuredHead = `${prefix}${runId}`
+  const { prefix, head: configuredHead } = publicationHeadBranch(config, request)
   const api = async (method, path, body) => {
     const response = await fetchImpl(`https://api.github.com/repos/${targetRepo}${path}`, { method, headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) })
     const payload = await response.json().catch(() => ({}))
@@ -21,7 +47,7 @@ export async function publishRunnerWorkspace({ request, changedFiles, publicatio
     return payload
   }
   if (!base) base = string((await api("GET", "")).default_branch)
-  if (!/^[A-Za-z0-9._/-]+$/.test(prefix) || !configuredHead.startsWith(prefix) || configuredHead.includes("..") || !/^[A-Za-z0-9._/-]+$/.test(base)) {
+  if (!/^[A-Za-z0-9._/-]*$/.test(prefix) || !/^[A-Za-z0-9._/-]+$/.test(configuredHead) || !configuredHead.startsWith(prefix) || configuredHead.includes("..") || configuredHead.startsWith("/") || configuredHead.endsWith("/") || !/^[A-Za-z0-9._/-]+$/.test(base)) {
     throw new Error(hasConfiguredBase ? "Runner workspace branch configuration is invalid." : "Runner workspace branch configuration is invalid: repository metadata must provide a valid default branch when base is omitted.")
   }
   const refPath = (name) => `/git/ref/heads/${name.split("/").map(encodeURIComponent).join("/")}`
@@ -86,7 +112,7 @@ export async function publishRunnerWorkspace({ request, changedFiles, publicatio
   const commit = await api("POST", "/git/commits", { message: string(config.commit_message || request.workload?.label || "Apply agent task changes"), tree: string(nextTree.sha), parents: [parent] })
   if (pull) await api("PATCH", `/git/refs/heads/${head.split("/").map(encodeURIComponent).join("/")}`, { sha: string(commit.sha), force: false })
   else await api("POST", "/git/refs", { ref: `refs/heads/${head}`, sha: string(commit.sha) })
-  pull ||= await api("POST", "/pulls", { title: string(config.title || request.workload?.label || "Apply agent task changes"), head, base, body: string(config.body || "") })
+  pull ||= await api("POST", "/pulls", { title: string(config.title || request.workload?.label || "Apply agent task changes"), head, base, body: publicationPullBody(config, captured) })
   if (!isExactPull(pull, head) || !/^https:\/\/github\.com\//.test(string(pull.html_url))) throw new Error("GitHub publication response did not match the requested repository and branches.")
   return { schema: "wp-codebox/runner-workspace-publication-result/v1", success: true, status: "published", backend: "github-rest", branch: { base, base_sha: baseSha, head, name: head }, commit: { sha: string(commit.sha), parent_sha: parent }, pull_request: { number: pull.number, url: pull.html_url, reused: reusedPull, opened: !reusedPull } }
 }

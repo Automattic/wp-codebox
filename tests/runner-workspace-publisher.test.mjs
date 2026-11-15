@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { publishRunnerWorkspace } from "../.github/scripts/run-agent-task/runner-workspace-publisher.mjs"
+import { publicationHeadBranch, publicationPullBody, publishRunnerWorkspace } from "../.github/scripts/run-agent-task/runner-workspace-publisher.mjs"
 
 const request = { target_repo: "owner/repo", workload: { id: "run-1", label: "Update" }, runner_workspace: { enabled: true, repo: "owner/repo", base: "main", branch_prefix: "wp-codebox/agent-task/" }, access: { allowed_repos: ["owner/repo"] } }
 const publicationFiles = [{ path: "README.md", mode: "100644", content: Buffer.from("changed\n").toString("base64"), deleted: false }]
@@ -119,4 +119,39 @@ await assert.rejects(() => publishRunnerWorkspace({ request, changedFiles: ["REA
   await publishRunnerWorkspace({ request, changedFiles: ["README.md"], publicationFiles: [{ path: "README.md", mode: "100755", content: Buffer.from("changed\n").toString("base64"), deleted: false }], token: "secret", fetchImpl: mock.fetch })
   assert(mock.calls.some(([url]) => url.endsWith("/git/trees")))
 }
+// Branch naming (wp-codebox#2591): the caller's branch is used as given and
+// a prefix is joined to the run id with a separator only when it lacks one.
+assert.deepEqual(publicationHeadBranch({ branch: "docs-agent/extrachill-shop-user-docs", branch_prefix: "docs-agent/extrachill-shop-user-docs" }, { workload: { id: "docs-agent-user-maintenance" } }).head, "docs-agent/extrachill-shop-user-docs", "an explicit branch is used exactly, never with the workload id appended")
+assert.equal(publicationHeadBranch({ head_branch: "release/notes" }, { workload: { id: "w" } }).head, "release/notes", "head_branch is an explicit branch alias")
+assert.equal(publicationHeadBranch({ branch_prefix: "wp-codebox/agent-task/" }, { workload: { id: "run-1" } }).head, "wp-codebox/agent-task/run-1", "a prefix ending in / is joined directly")
+assert.equal(publicationHeadBranch({ branch_prefix: "docs/upkeep-" }, { workload: { id: "run-1" } }).head, "docs/upkeep-run-1", "a prefix ending in - is joined directly")
+assert.equal(publicationHeadBranch({ branch_prefix: "docs/upkeep" }, { workload: { id: "run-1" } }).head, "docs/upkeep-run-1", "a prefix without a trailing separator gets exactly one - separator")
+assert.equal(publicationHeadBranch({}, { workload: { id: "run 1" } }).head, "wp-codebox/agent-task/run-1", "the default prefix and sanitized run id remain unchanged")
+{
+  const explicitRequest = { ...request, workload: { id: "docs-agent-user-maintenance", label: "Run Docs Agent" }, runner_workspace: { ...request.runner_workspace, branch: "wp-codebox/agent-task/run-1", branch_prefix: "wp-codebox/agent-task/run-1" } }
+  const mock = fetchMock(false)
+  const result = await publishRunnerWorkspace({ request: explicitRequest, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: mock.fetch })
+  assert.equal(result.branch.head, "wp-codebox/agent-task/run-1", "first publication on an explicit branch uses it unchanged")
+  const refCreate = mock.calls.find(([url, method]) => new URL(url).pathname.endsWith("/git/refs") && method === "POST")
+  assert.equal(refCreate?.[2]?.ref, "refs/heads/wp-codebox/agent-task/run-1", "the created ref is the caller branch")
+}
+{
+  const explicitRequest = { ...request, workload: { id: "docs-agent-user-maintenance", label: "Run Docs Agent" }, runner_workspace: { ...request.runner_workspace, branch: "wp-codebox/agent-task/run-1" } }
+  const reused = await publishRunnerWorkspace({ request: explicitRequest, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: fetchMock(true).fetch })
+  assert.equal(reused.branch.head, "wp-codebox/agent-task/run-1", "an explicit branch with an exact open PR is reused unchanged")
+  assert.equal(reused.pull_request.reused, true)
+  const fresh = await publishRunnerWorkspace({ request: explicitRequest, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: fetchMock(true, "main", undefined, false).fetch })
+  assert.equal(fresh.branch.head, "wp-codebox/agent-task/run-1-base", "an explicit branch without an open PR gets the base-SHA suffix exactly once")
+}
+// Pull request title and body.
+{
+  const titledRequest = { ...request, runner_workspace: { ...request.runner_workspace, title: "docs(shop): user docs maintenance", body: "Summary." } }
+  const mock = fetchMock(false)
+  await publishRunnerWorkspace({ request: titledRequest, changedFiles: ["docs/a.md", "docs/b.md"], publicationFiles: [...publicationFiles, { path: "docs/old.md", deleted: true }], token: "secret", fetchImpl: mock.fetch })
+  const pullCreate = mock.calls.find(([url, method]) => new URL(url).pathname.endsWith("/pulls") && method === "POST")
+  assert.equal(pullCreate?.[2]?.title, "docs(shop): user docs maintenance", "a caller title wins over the workload label")
+  assert.equal(pullCreate?.[2]?.body, "Summary.\n\n### Changed files (2)\n\n- `README.md`\n- `docs/old.md` (deleted)", "the PR body appends the changed files to the caller body")
+}
+assert.equal(publicationPullBody({}, []), "", "no files and no caller body yields an empty body")
+assert.equal(publicationPullBody({ body: "Only body" }, []), "Only body")
 console.log("runner workspace publisher ok")

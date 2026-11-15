@@ -106,6 +106,7 @@ a recipe. They cover:
 | `recipe-run` | Repeatable JSON recipes: mounts, workspaces, seeds, steps, assertions, artifacts. `--dry-run` resolves the plan without booting. | [Recipe contract](docs/recipe-contract.md) |
 | `bench` and `artifacts bench-*` | Benchmark matrices and baseline-versus-candidate comparison. | [Benchmark contract](docs/benchmark-contract.md) |
 | `agent-task-run` | One natural-language task through a mounted agent stack, returning a patch and preview. | [Agent runtime contract](docs/agent-runtime-contract.md) |
+| `run-agent-task.yml` | Reusable GitHub Actions workflow: run an agent package against a repository and publish a pull request. Branch, title, and body rules are under *Publication branch, title, and body*; the agent's git-less `workspace_git_status` / `workspace_git_diff` tools are described in the sandbox workspace contract. | [Agent task reusable workflow](docs/agent-task-reusable-workflow.md), [Sandbox workspace contract](docs/sandbox-workspace-contract.md#workspace-status-and-diff-tools) |
 | `run-wordpress-workload`, `run-fuzz-suite`, `adversarial` | Workloads, fuzz suites, and adversarial campaigns with replay. | [Adversarial runtime](docs/adversarial-runtime.md) |
 | `artifacts`, `runs` | Verify, inspect, and recover bundles; poll or cancel recipe runs. | [Artifact bundles](docs/artifact-bundles.md) |
 | TypeScript packages | Embed the runtime: `wp-codebox-workspace/core`, `/playground`, `/cli`, and friends. | [Public API contract](docs/public-api-contract.md) |
