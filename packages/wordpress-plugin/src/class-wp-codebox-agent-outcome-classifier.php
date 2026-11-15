@@ -34,7 +34,9 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 		$has_run_outcome      = ! empty( $run_outcome );
 		$run_status           = (string) ( $run_outcome['status'] ?? '' );
 		$stop_reason          = (string) ( $run_outcome['stop_reason'] ?? '' );
-		$max_turns_reached    = $has_run_outcome ? 'max_turns' === $stop_reason : $this->recursive_truthy_key( $run, 'max_turns_reached' );
+		// The upstream loop reports a silent max_turns cut-off as a natural stop, so
+		// the runtime package executor's turn-limit record is honored as well.
+		$max_turns_reached    = ( $has_run_outcome ? 'max_turns' === $stop_reason : $this->recursive_truthy_key( $run, 'max_turns_reached' ) ) || $this->turn_limit_reached( $run );
 		$pending_runtime_tool = $has_run_outcome && ( 'runtime_tool_pending' === $run_status || 'runtime_tool_pending' === $stop_reason );
 		$provider_error       = $has_run_outcome ? $this->agents_api_provider_error_details( $run_outcome ) : array();
 		$artifact             = $this->remediation_artifact_details( $run );
@@ -233,6 +235,23 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 	}
 
 	/** @param array<string,mixed> $payload */
+	/** @param array<string,mixed> $payload Decoded run output. */
+	private function turn_limit_reached( array $payload, int $depth = 0 ): bool {
+		if ( $depth > 16 ) {
+			return false;
+		}
+		if ( 'wp-codebox/agent-turn-limit/v1' === ( $payload['schema'] ?? null ) ) {
+			return true === ( $payload['max_turns_reached'] ?? false );
+		}
+		foreach ( $payload as $value ) {
+			if ( is_array( $value ) && $this->turn_limit_reached( $value, $depth + 1 ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	private function recursive_truthy_key( array $payload, string $needle ): bool {
 		foreach ( $payload as $key => $value ) {
 			if ( $needle === (string) $key && true === (bool) $value ) {

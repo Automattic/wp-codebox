@@ -11,6 +11,7 @@ import { assertNoRuntimeSourcePaths, sanitizeArtifactUploadText, sanitizeRuntime
 import { publishRunnerWorkspace } from "./runner-workspace-publisher.mjs"
 import { createRunnerWorkspaceSeedSnapshot, RUNNER_WORKSPACE_SEED_EXCLUDES } from "./runner-workspace-seed-snapshot.mjs"
 import { runnerWorkspaceApplyOutcome, sandboxWorkspaceMutations } from "./runner-workspace-apply-outcome.mjs"
+import { agentTurnLimitFailure, agentTurnLimitOutcome } from "./agent-turn-limit-outcome.mjs"
 import { createTrustedArtifactApplyChannel, trustedArtifactApplyRefs } from "./trusted-artifact-snapshot.mjs"
 import { artifactSourcePathCategory, assertNoSeedSnapshotPaths, containsRuntimeSourceContent, sanitizeSeedSnapshotJson } from "./artifact-upload-policy.mjs"
 import { publishProcessMarker } from "../../../scripts/process-marker.mjs"
@@ -761,6 +762,9 @@ const taskInput = {
           prompt: request.prompt,
           provider: requestedModel.provider,
           model: requestedModel.name,
+          // The runtime package runs its own agents/chat turn from this block;
+          // without an explicit limit here the package/handler default wins.
+          ...(Number.isSafeInteger(request.limits?.max_turns) && request.limits.max_turns > 0 ? { max_turns: request.limits.max_turns } : {}),
           runner_workspace: { ...record(request.runner_workspace), allowed_repos: request.access.allowed_repos },
           target_repo: request.target_repo,
            writable_paths: writablePaths,
@@ -811,7 +815,14 @@ let applyError
 let workspaceEvidence
 let runnerWorkspaceCore = null
 let downstreamFailure = null
-if (execution.code === 0 && runtimeResult.success === true && request.runner_workspace?.enabled) {
+// A turn-capped agent never produced a final answer: report it at the agent
+// stage and never apply or publish its partial work as if it had finished.
+const agentTurnLimit = request.run_agent && !request.dry_run
+  ? agentTurnLimitOutcome({ runtimeResult, toolObservability, maxTurns: request.limits?.max_turns })
+  : undefined
+const agentTurnCapReached = agentTurnLimit?.status === "max_turns"
+if (agentTurnCapReached) downstreamFailure = agentTurnLimitFailure(agentTurnLimit)
+if (execution.code === 0 && runtimeResult.success === true && request.runner_workspace?.enabled && !agentTurnCapReached) {
   try {
     runnerWorkspaceCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/runner-workspace-apply.js")).href)
     const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
@@ -926,6 +937,7 @@ const success = request.run_agent && !request.dry_run
   ? execution.code === 0 && runtimeRecord.success === true && verificationPassed && publicationPassed && !projectionError && !downstreamFailure
   : true
 const status = request.run_agent && !request.dry_run ? (success ? "succeeded" : "failed") : "skipped"
+const terminalStatus = agentTurnCapReached ? "max_turns" : undefined
 const workflowOutputs = {
   transcript_json: await workflowOutputReference("transcript_json", serializedJson(agentResult.refs?.transcripts || []), artifactsPath),
   engine_data_json: await workflowOutputReference("engine_data_json", serializedJson(redact(record(runtimeRecord.outputs))), artifactsPath),
@@ -936,6 +948,7 @@ const result = {
   schema: "wp-codebox/agent-task-workflow-result/v1",
   run_id: runId,
   status,
+  ...(terminalStatus ? { terminal_status: terminalStatus } : {}),
   success,
   request_path: requestPath,
   runtime_input_path: ".codebox/native-agent-task-input.json",
@@ -948,6 +961,7 @@ const result = {
     } : {}),
   },
   runtime_result: redact(runtimeRecord),
+  ...(agentTurnLimit ? { agent_turn_limit: agentTurnLimit } : {}),
   ...(workspaceApplyOutcome ? { workspace_apply: workspaceApplyOutcome } : {}),
   ...(reviewerEvidence ? { reviewer_evidence: reviewerEvidence } : {}),
   verification,
@@ -974,7 +988,7 @@ assertNoRuntimeSourcePaths(sanitizedResult, privateRuntimeSourceRootForSanitizat
 await writeFile(resultPath, `${JSON.stringify(sanitizedResult, null, 2)}\n`)
 await output("job_status", status)
 await output("transcript_json", workflowOutputs.transcript_json.rendered)
-await output("transcript_summary", `${request.workload?.label || "Run Agent Task"}: ${status}`)
+await output("transcript_summary", `${request.workload?.label || "Run Agent Task"}: ${status}${terminalStatus ? ` (${terminalStatus})` : ""}`)
 await output("engine_data_json", workflowOutputs.engine_data_json.rendered)
 await output("projected_outputs_json", workflowOutputs.projected_outputs_json.rendered)
 await output("credential_mode", result.access.credential_mode)

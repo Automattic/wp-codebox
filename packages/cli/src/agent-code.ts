@@ -586,6 +586,12 @@ async function normalizeRuntimeTask(config: Record<string, unknown> | undefined,
   if (!recordValue(input.task_input)) {
     input.task_input = agentInput
   }
+  const runtimePackageChatInput = ability === 'wp-codebox/run-runtime-package' ? recordValue(input.input) : null
+  if (runtimePackageChatInput && !positiveInteger(runtimePackageChatInput.max_turns) && positiveInteger(agentInput.max_turns)) {
+    // The runtime package executes its own agents/chat turn from input.input, so
+    // the caller's --max-turns must ride along or the package default wins.
+    input.input = { ...runtimePackageChatInput, max_turns: agentInput.max_turns }
+  }
 
   const normalized: Record<string, unknown> = { ability, input: await runtimeTaskInputWithInlineBundle(ability, input, workspace) }
   if (typeof config.wait_for_completion === "boolean") {
@@ -731,6 +737,10 @@ function stringFromKeys(record: Record<string, unknown>, keys: string[]): string
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function positiveInteger(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
 }
 
 export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string; pluginFile?: string; loadAs?: string }>, runtimeComponents: Array<{ slug: string; pluginFile?: string; loadAs?: string }> = []): string {

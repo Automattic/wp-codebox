@@ -100,7 +100,7 @@ final class WP_Codebox_Runtime_Package_Service {
 			}
 		}
 
-		return array(
+		$normalized = array(
 			'schema'      => 'wp-codebox/runtime-package-result/v1',
 			'status'      => $failed ? 'failed' : 'success',
 			'success'     => ! $failed,
@@ -110,6 +110,13 @@ final class WP_Codebox_Runtime_Package_Service {
 			'diagnostics' => $diagnostics,
 			'metadata'    => $metadata,
 		);
+		// A canonical terminal result (for example a max_turns stop) must reach the
+		// host so the turn cap is reported instead of collapsing into a generic failure.
+		if ( is_array( $result['terminal_result'] ?? null ) && 'wp-codebox/agent-terminal-result/v1' === (string) ( $result['terminal_result']['schema'] ?? '' ) ) {
+			$normalized['terminal_result'] = $result['terminal_result'];
+		}
+
+		return $normalized;
 	}
 
 	/** @param array<string,mixed> $descriptor Package descriptor. @param array<string,mixed> $input Runtime package input. @return array<string,string> */
