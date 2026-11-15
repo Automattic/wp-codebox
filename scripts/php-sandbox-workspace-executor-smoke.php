@@ -90,6 +90,8 @@ namespace {
 		);
 	};
 
+	WP_Codebox_Sandbox_Workspace_Executor::reset_mutation_ledger();
+
 	// --- write -------------------------------------------------------
 	$write = $call( 'workspace_write', array( 'path' => 'notes/todo.txt', 'content' => "line1\nline2\n" ) );
 	assert_true( true === $write['success'], 'write succeeds' );
@@ -225,6 +227,63 @@ namespace {
 		assert_true( $tool_name === $tool['name'], "{$tool_name} has a canonical name" );
 		assert_true( 'wp-codebox/sandbox-workspace' === $tool['runtime']['executor_target'], "{$tool_name} routes to sandbox executor target" );
 		assert_true( isset( $tool['parameters']['properties'] ), "{$tool_name} includes a parameter schema" );
+	}
+
+	// --- mutation ledger (issue #2567) -------------------------------
+	// Content-free record of write attempts lets the host tell a lost write
+	// from a rejected or never-attempted one.
+	$ledger = WP_Codebox_Sandbox_Workspace_Executor::mutation_ledger();
+	assert_true( 'wp-codebox/sandbox-workspace-mutations/v1' === $ledger['schema'], 'ledger carries its schema' );
+	$ledger_tools = array_values( array_unique( array_column( $ledger['calls'], 'tool' ) ) );
+	assert_true( array() === array_diff( $ledger_tools, array( 'workspace_write', 'workspace_edit', 'workspace_apply_patch' ) ), 'ledger records mutation tools only' );
+	assert_true( array( 'tool' => 'workspace_write', 'status' => 'succeeded', 'paths' => array( 'notes/todo.txt' ) ) === $ledger['calls'][0], 'ledger records a successful write with its path' );
+	$denied = array_values( array_filter( $ledger['calls'], static fn( array $entry ): bool => 'writable_path_denied' === ( $entry['error_type'] ?? '' ) ) );
+	assert_true( 1 <= count( $denied ) && 'failed' === $denied[0]['status'] && array( 'README.md' ) === $denied[0]['paths'], 'ledger records a rejected write with its path and reason' );
+	$patched = array_values( array_filter( $ledger['calls'], static fn( array $entry ): bool => 'workspace_apply_patch' === $entry['tool'] && 'succeeded' === $entry['status'] ) );
+	assert_true( array( 'patch-target.txt' ) === $patched[0]['paths'], 'ledger records apply-patch changed files' );
+	assert_true( ! str_contains( (string) json_encode( $ledger ), 'line1' ), 'ledger never records file contents' );
+	WP_Codebox_Sandbox_Workspace_Executor::reset_mutation_ledger();
+	assert_true( array() === WP_Codebox_Sandbox_Workspace_Executor::mutation_ledger()['calls'], 'ledger resets between runs' );
+
+	// --- nested writable globs (issue #2567) --------------------------
+	$nested_context = array( 'workspace_root' => $root_real, 'writable_paths' => array( 'plugins/extrachill-shop/docs/user/**' ) );
+	$nested_write   = $executor->executeWP_Agent_Tool_Call(
+		array( 'tool_name' => 'workspace_write', 'parameters' => array( 'path' => 'plugins/extrachill-shop/docs/user/getting-started.md', 'content' => "nested\n" ) ),
+		array( 'name' => 'workspace_write' ),
+		$nested_context
+	);
+	assert_true( true === $nested_write['success'] && is_file( $root_real . '/plugins/extrachill-shop/docs/user/getting-started.md' ), 'nested writable glob accepts a new file in a new directory' );
+	$nested_sibling = $executor->executeWP_Agent_Tool_Call(
+		array( 'tool_name' => 'workspace_write', 'parameters' => array( 'path' => 'plugins/extrachill-shop/docs/admin.md', 'content' => 'x' ) ),
+		array( 'name' => 'workspace_write' ),
+		$nested_context
+	);
+	assert_true( false === $nested_sibling['success'] && 'writable_path_denied' === $nested_sibling['error_type'], 'nested writable glob rejects siblings outside the subtree' );
+
+	// Writable-path matching mirrors runtime-core writablePathMatches so the
+	// host apply gate never drops a change the sandbox accepted.
+	foreach ( array(
+		array( 'plugins/extrachill-shop/docs/user/a.md', 'plugins/extrachill-shop/docs/user/**', true ),
+		array( 'plugins/extrachill-shop/docs/user/x/a.md', 'plugins/extrachill-shop/docs/user/**', true ),
+		array( 'plugins/extrachill-shop/docs/user', 'plugins/extrachill-shop/docs/user/**', true ),
+		array( 'plugins/extrachill-shop/docs/a.md', 'plugins/extrachill-shop/docs/user/**', false ),
+		array( 'plugins/extrachill-shop/docs/userx/a.md', 'plugins/extrachill-shop/docs/user/**', false ),
+		array( 'docs/user/a.md', './docs/user/**', true ),
+		array( 'docs/user/a.md', '/docs/user/', true ),
+		array( 'docs/a.md', 'docs/**/*.md', true ),
+		array( 'docs/x/y/a.md', 'docs/**/*.md', true ),
+		array( 'docs/x/y/a.txt', 'docs/**/*.md', false ),
+		array( 'plugins/foo/docs/user/a.md', 'plugins/*/docs/user/**', true ),
+		array( 'plugins/foo/bar/docs/user/a.md', 'plugins/*/docs/user/**', false ),
+		array( 'docs/user/a.md', 'docs/user/*.md', true ),
+		array( 'docs/user/x/a.md', 'docs/user/*.md', false ),
+		array( 'docs/a.md', 'docs/[!b]*.md', true ),
+		array( 'docs/b.md', 'docs/[!b]*.md', false ),
+		array( 'README.md', 'README.md', true ),
+		array( 'README.md.bak', 'README.md', false ),
+		array( 'anything.md', '.', false ),
+	) as list( $path, $pattern, $expected ) ) {
+		assert_true( $expected === WP_Codebox_Sandbox_Workspace_Executor::writable_pattern_matches( $path, $pattern ), "writable pattern parity: {$path} vs {$pattern}" );
 	}
 
 	// Cleanup.

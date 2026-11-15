@@ -181,6 +181,7 @@ function projectWorkflowResult(value) {
     execution: Object.keys(execution).length ? { stdout_truncated: execution.stdout_truncated, stderr_truncated: execution.stderr_truncated } : undefined,
     reviewer_evidence: reviewerEvidence.transcript === undefined ? undefined : { transcript: reviewerEvidence.transcript },
     verification,
+    workspace_apply: result.workspace_apply,
     publication: result.publication,
     transcript: result.transcript,
     artifacts: result.artifacts,
@@ -238,15 +239,45 @@ function projectToolCall(value) {
   return Object.fromEntries(Object.entries({ tool, paths: paths.length ? paths : undefined, status: boundedText(entry.status), arguments: Object.keys(args).length ? args : undefined, result: Object.keys(resultSummary).length ? resultSummary : undefined, error_code: boundedText(record(entry.error).code ?? entry.error_code), error: boundedText(record(entry.error).message ?? entry.error) }).filter(([, item]) => item !== undefined))
 }
 
+// The canonical `wordpress.run-php` execution carries the agent runtime result
+// as a JSON-encoded string in `parsed.output`; decode it so tool calls survive.
+function decodedParsedOutput(parsed) {
+  if (typeof parsed.output !== "string" || Buffer.byteLength(parsed.output) > MAX_UPLOAD_FILE_BYTES) return record(parsed.output)
+  try {
+    return record(JSON.parse(parsed.output))
+  } catch {
+    return {}
+  }
+}
+
+// Content-free ledger written by the sandbox workspace executor: tool, outcome,
+// error type and target paths only. File contents are never part of it.
+function projectWorkspaceMutations(value) {
+  const ledger = record(value)
+  if (ledger.schema !== "wp-codebox/sandbox-workspace-mutations/v1" || !Array.isArray(ledger.calls)) return undefined
+  const calls = ledger.calls.slice(0, MAX_TRANSCRIPT_EXECUTIONS).flatMap((value) => {
+    const call = record(value)
+    if (!["workspace_write", "workspace_edit", "workspace_apply_patch"].includes(call.tool) || !["succeeded", "failed"].includes(call.status)) return []
+    const paths = (Array.isArray(call.paths) ? call.paths : []).map(safeTargetPath).filter(Boolean).slice(0, 32)
+    return [Object.fromEntries(Object.entries({ tool: call.tool, status: call.status, paths, error_type: safeToolIdentifier(call.error_type) ? call.error_type : undefined }).filter(([, item]) => item !== undefined))]
+  })
+  return { schema: ledger.schema, calls, dropped: Number.isSafeInteger(ledger.dropped) && ledger.dropped >= 0 ? ledger.dropped : 0 }
+}
+
 function projectParsed(value) {
   const parsed = record(value)
+  const decoded = decodedParsedOutput(parsed)
+  const runtimeMetadata = record(record(record(parsed.agent_runtime ?? decoded.agent_runtime).result).metadata)
   const messages = Array.isArray(parsed.messages) ? parsed.messages : Array.isArray(parsed.model_messages) ? parsed.model_messages : []
   const tools = Array.isArray(parsed.tool_calls) ? parsed.tool_calls : Array.isArray(parsed.toolCalls) ? parsed.toolCalls : []
   const results = Array.isArray(parsed.tool_results) ? parsed.tool_results : Array.isArray(parsed.toolResults) ? parsed.toolResults : []
   const errors = Array.isArray(parsed.errors) ? parsed.errors : parsed.error ? [parsed.error] : []
   const agent = record(parsed.agent ?? parsed.agent_metadata)
   const toolObservability = canonicalToolObservability(parsed.metadata)
-    ?? canonicalToolObservability(record(parsed.agent_runtime).result?.metadata)
+    ?? canonicalToolObservability(runtimeMetadata)
+    ?? canonicalToolObservability(decoded.metadata)
+  const workspaceMutations = projectWorkspaceMutations(runtimeMetadata.sandbox_workspace_mutations)
+    ?? projectWorkspaceMutations(record(decoded.metadata).sandbox_workspace_mutations)
   return Object.fromEntries(Object.entries({
     agent: Object.fromEntries(["id", "name", "status"].flatMap((key) => boundedText(agent[key]) ? [[key, boundedText(agent[key])]] : [])),
     model_messages: messages.slice(0, MAX_TRANSCRIPT_EXECUTIONS).flatMap((message) => boundedText(record(message).content ?? record(message).text ?? message) ? [{ role: boundedText(record(message).role), content: boundedText(record(message).content ?? record(message).text ?? message) }] : []),
@@ -254,6 +285,7 @@ function projectParsed(value) {
     tool_results: results.slice(0, MAX_TRANSCRIPT_EXECUTIONS).map(projectToolCall),
     errors: errors.slice(0, MAX_TRANSCRIPT_EXECUTIONS).flatMap((error) => boundedText(record(error).message ?? error) ? [boundedText(record(error).message ?? error)] : []),
     tool_observability: toolObservability,
+    workspace_mutations: workspaceMutations,
   }).filter(([, item]) => item !== undefined && (Array.isArray(item) ? item.length > 0 : Object.keys(item).length > 0)))
 }
 

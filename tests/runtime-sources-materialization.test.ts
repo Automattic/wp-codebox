@@ -195,6 +195,37 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
   const transcriptExclusions = await readFile(join(upload, ".codebox", "agent-task-artifacts", "exclusions.json"), "utf8")
   assert.match(transcriptExclusions, /canonical_transcripts/)
   assert.match(transcriptExclusions, /codebox-transcript/)
+  {
+    // Issue #2567: the real `wordpress.run-php` execution carries the agent runtime
+    // result as a JSON-encoded string in parsed.output. The projection must decode
+    // it so tool-call names and paths reach the uploaded transcript.
+    const decodedOutput = JSON.stringify({ agent_runtime: { success: true, result: { metadata: {
+      agents_api: { tool_observability: { version: 1, calls: [{ sequence: 1, turn: 1, tool_call_id: "write-1", tool_name: "client/workspace_write", status: "succeeded", arguments: { keys: ["path", "content"], count: 2, redacted: true } }] } },
+      sandbox_workspace_mutations: { schema: "wp-codebox/sandbox-workspace-mutations/v1", dropped: 0, calls: [
+        { tool: "workspace_write", status: "succeeded", paths: ["plugins/extrachill-shop/docs/user/getting-started.md"], content: "secret-transcript-value" },
+        { tool: "workspace_write", status: "failed", paths: ["../escape.md"], error_type: "writable_path_denied" },
+        { tool: "workspace_read", status: "succeeded", paths: ["README.md"] },
+      ] },
+    } } } })
+    const runPhpSource = JSON.stringify({ schema: "wp-codebox/agent-transcript/v1", executions: [{ executionIndex: 4, command: "wordpress.run-php", exitCode: 0, parsed: { command: "wp-codebox.agent-sandbox-run", wp_loaded: true, output: decodedOutput } }] })
+    await writeFile(join(artifacts, "files", "transcript.json"), runPhpSource)
+    const runPhpDigest = createHash("sha256").update(runPhpSource).digest("hex")
+    const workspaceApply = { schema: "wp-codebox/runner-workspace-apply-outcome/v1", status: "writes-not-applied", message: "The agent made 1 successful workspace write call(s).", applied_paths: [], rejected_paths: [], unapplied_paths: ["plugins/extrachill-shop/docs/user/getting-started.md"], write_tool_calls: { source: "sandbox-ledger", attempted: 1, succeeded: 1, failed: 0, paths: ["plugins/extrachill-shop/docs/user/getting-started.md"] } }
+    await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ schema: "wp-codebox/agent-task-workflow-result/v1", status: "failed", success: false, workspace_apply: workspaceApply, reviewer_evidence: { transcript: { schema: "wp-codebox/agent-transcript/v1", kind: "codebox-transcript", path: "files/transcript.json", source_sha256: runPhpDigest, size_bytes: Buffer.byteLength(runPhpSource) } } }))
+    await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot, OPENAI_API_KEY: "secret-transcript-value" } })
+    const runPhpTranscript = JSON.parse(await readFile(join(upload, ".codebox", "agent-task-artifacts", "transcript.json"), "utf8"))
+    const parsed = runPhpTranscript.executions[0].parsed
+    assert.equal(parsed.tool_observability.calls[0].tool_name, "client/workspace_write", "tool-call names survive the string-encoded runtime output")
+    assert.deepEqual(parsed.workspace_mutations, { schema: "wp-codebox/sandbox-workspace-mutations/v1", dropped: 0, calls: [
+      { tool: "workspace_write", status: "succeeded", paths: ["workspace/plugins/extrachill-shop/docs/user/getting-started.md"] },
+      { tool: "workspace_write", status: "failed", paths: [], error_type: "writable_path_denied" },
+    ] }, "write paths survive; unsafe paths, contents and read tools do not")
+    assert.doesNotMatch(JSON.stringify(runPhpTranscript), /secret-transcript-value|escape\.md/)
+    const stagedApply = JSON.parse(await readFile(join(upload, ".codebox", "agent-task-workflow-result.json"), "utf8")).workspace_apply
+    assert.equal(stagedApply.status, "writes-not-applied", "the explicit apply outcome is uploaded with the workflow result")
+    assert.deepEqual(stagedApply.unapplied_paths, ["plugins/extrachill-shop/docs/user/getting-started.md"])
+    await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ schema: "wp-codebox/agent-task-workflow-result/v1", status: "succeeded", success: true, reviewer_evidence: reviewerEvidence }))
+  }
   await writeFile(join(artifacts, "files", "transcript.json"), `${transcriptSource}\n`)
   await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } }), /digest does not match/, "Uploader rejects stale reviewer evidence digests")
   await writeFile(join(artifacts, "files", "transcript.json"), transcriptSource)

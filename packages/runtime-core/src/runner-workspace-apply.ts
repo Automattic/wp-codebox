@@ -3,7 +3,7 @@ import { readFile, lstat, realpath, readdir } from "node:fs/promises"
 import { isAbsolute, resolve, relative } from "node:path"
 import { promisify } from "node:util"
 import { createHash } from "node:crypto"
-import { pathIsWithinRoot, relativePathMatchesExcludePattern } from "./file-tree-policy.js"
+import { normalizeRelativePath, pathIsWithinRoot } from "./file-tree-policy.js"
 
 const execFileAsync = promisify(execFile)
 const MAX_PATCH_BYTES = 5 * 1024 * 1024
@@ -44,10 +44,17 @@ export interface RunnerWorkspaceApplyFailureEvidence {
   changed_files: { artifact_path: string; sha256: string }
 }
 
+export interface RunnerWorkspaceRejectedPath {
+  path: string
+  reason: "denied-path" | "unsupported-mode" | "outside-writable-paths"
+}
+
 export interface RunnerWorkspaceApplyResult {
   schema: "wp-codebox/runner-workspace-apply-result/v1"
   status: "applied" | "no-op"
   changedFiles: string[]
+  /** Number of change entries the canonical sandbox manifest declared. */
+  declaredChanges: number
   patchSha256?: string
   integrity?: RunnerWorkspaceIntegritySnapshot
   publicationFiles?: RunnerWorkspacePublicationFile[]
@@ -104,7 +111,7 @@ export async function applyRunnerWorkspacePatch(request: RunnerWorkspaceApplyReq
   }
   if (changed.length === 0) {
     if (patch.trim()) throw new Error("Canonical patch is non-empty but changed-files declares no changes.")
-    return { schema: "wp-codebox/runner-workspace-apply-result/v1", status: "no-op", changedFiles: [] }
+    return { schema: "wp-codebox/runner-workspace-apply-result/v1", status: "no-op", changedFiles: [], declaredChanges: 0 }
   }
   if (!patch.trim()) throw new Error("Canonical changed-files declares changes but patch is empty.")
   validatePatchPaths(patch, changed)
@@ -123,6 +130,7 @@ export async function applyRunnerWorkspacePatch(request: RunnerWorkspaceApplyReq
     schema: "wp-codebox/runner-workspace-apply-result/v1",
     status: "applied",
     changedFiles: changed.map((file) => file.relativePath),
+    declaredChanges: changed.length,
     patchSha256: createHash("sha256").update(patch).digest("hex"),
     integrity: { workspaceRoot, files, baseline },
     publicationFiles: changed.map((change) => {
@@ -231,14 +239,96 @@ function parseChangedFiles(raw: string): RunnerWorkspaceChangedFile[] {
   })
 }
 
+/**
+ * Validates every declared change before anything is applied. All rejections
+ * are collected so the failure names each dropped path and why, instead of
+ * stopping at the first one.
+ */
 function validateChangedFiles(files: RunnerWorkspaceChangedFile[], writablePaths: string[]): void {
   if (writablePaths.length === 0) throw new Error("A non-empty writable path policy is required.")
+  const rejected: RunnerWorkspaceRejectedPath[] = []
   for (const file of files) {
     const path = file.relativePath.replaceAll("\\", "/")
-    if (!path || path.startsWith("/") || path.split("/").some((part) => part === "" || part === "." || part === ".." || part === ".git" || part === ".codebox")) throw new Error(`Changed file has a denied path: ${file.relativePath}`)
-    if (![file.beforeMode, file.afterMode].filter(Boolean).every((mode) => mode === "100644" || mode === "100755")) throw new Error(`Changed file has an unsupported mode: ${file.relativePath}`)
-    if (!writablePaths.some((pattern) => relativePathMatchesExcludePattern(path, pattern))) throw new Error(`Changed file is outside writable_paths: ${file.relativePath}`)
+    if (!path || path.startsWith("/") || path.split("/").some((part) => part === "" || part === "." || part === ".." || part === ".git" || part === ".codebox")) {
+      rejected.push({ path: file.relativePath, reason: "denied-path" })
+    } else if (![file.beforeMode, file.afterMode].filter(Boolean).every((mode) => mode === "100644" || mode === "100755")) {
+      rejected.push({ path: file.relativePath, reason: "unsupported-mode" })
+    } else if (!writablePaths.some((pattern) => writablePathMatches(path, pattern))) {
+      rejected.push({ path: file.relativePath, reason: "outside-writable-paths" })
+    }
   }
+  if (rejected.length === 0) return
+  const [first] = rejected
+  const message = first.reason === "denied-path"
+    ? `Changed file has a denied path: ${first.path}`
+    : first.reason === "unsupported-mode"
+      ? `Changed file has an unsupported mode: ${first.path}`
+      : `Changed file is outside writable_paths: ${first.path}`
+  const error = new Error(rejected.length > 1 ? `${message} (${rejected.length} paths rejected)` : message) as Error & { rejectedPaths?: RunnerWorkspaceRejectedPath[] }
+  error.rejectedPaths = rejected.slice(0, 100)
+  throw error
+}
+
+/**
+ * Matches a workspace-relative path against one `writable_paths` entry.
+ *
+ * Semantics intentionally mirror the sandbox workspace tools so the host never
+ * drops a change the sandbox accepted: a leading `./` or `/` is ignored, a
+ * trailing `/**` (or a bare directory) grants the whole subtree, `**` as a
+ * path segment spans zero or more directories, and `*`, `?` and `[...]` match
+ * within a single segment.
+ */
+export function writablePathMatches(relativePath: string, pattern: string): boolean {
+  const path = normalizeRelativePath(relativePath).replace(/^\/+/, "")
+  const normalized = normalizeRelativePath(pattern.trim()).replace(/^\/+/, "").replace(/\/+$/, "")
+  if (!path || !normalized || normalized === ".") return false
+  if (path === normalized) return true
+  if (normalized.endsWith("/**")) {
+    const prefix = normalized.slice(0, -3)
+    if (!/[*?[]/.test(prefix)) return path === prefix || path.startsWith(`${prefix}/`)
+  }
+  if (!/[*?[]/.test(normalized)) return path.startsWith(`${normalized}/`)
+  return globRegExp(normalized).test(path)
+}
+
+function globRegExp(pattern: string): RegExp {
+  const segments = pattern.split("/")
+  let source = ""
+  for (const [index, segment] of segments.entries()) {
+    const last = index === segments.length - 1
+    if (segment === "**") {
+      // `a/**/b` matches `a/b` and `a/x/y/b`; a trailing `**` matches any descendant.
+      source += last ? "(?:[^/]+(?:/[^/]+)*)" : "(?:[^/]+/)*"
+      continue
+    }
+    source += globSegment(segment) + (last ? "" : "/")
+  }
+  return new RegExp(`^${source}$`)
+}
+
+function globSegment(segment: string): string {
+  let source = ""
+  for (let index = 0; index < segment.length; index++) {
+    const character = segment[index]
+    if (character === "*") {
+      source += "[^/]*"
+    } else if (character === "?") {
+      source += "[^/]"
+    } else if (character === "[") {
+      const close = segment.indexOf("]", index + 2)
+      if (close === -1) {
+        source += "\\["
+        continue
+      }
+      const raw = segment.slice(index + 1, close).replace(/\\/g, "\\\\")
+      // A class never spans a path separator, including negated classes.
+      source += raw.startsWith("!") || raw.startsWith("^") ? `[^/${raw.slice(1)}]` : `[${raw}]`
+      index = close
+    } else {
+      source += character.replace(/[.+^${}()|\\\]]/g, "\\$&")
+    }
+  }
+  return source
 }
 
 function validatePatchPaths(patch: string, changed: RunnerWorkspaceChangedFile[]): void {

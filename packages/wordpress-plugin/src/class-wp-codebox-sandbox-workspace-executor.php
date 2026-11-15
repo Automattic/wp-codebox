@@ -34,6 +34,20 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 	private const MAX_WRITE_BYTES  = 5242880;   // 5 MB write cap.
 	private const MAX_GREP_RESULTS = 500;
 	private const MAX_CONTEXT_LINES = 10;
+	private const MUTATION_TOOLS    = array( 'workspace_write', 'workspace_edit', 'workspace_apply_patch' );
+	private const MAX_MUTATION_LEDGER_ENTRIES = 64;
+	private const MAX_MUTATION_LEDGER_PATHS   = 32;
+
+	/**
+	 * Content-free record of workspace mutation attempts for the current run.
+	 *
+	 * Hosts read it after the agent finishes so a sandbox write that never
+	 * reaches the host workspace is attributable (accepted, rejected, or lost).
+	 *
+	 * @var array<int,array<string,mixed>>
+	 */
+	private static array $mutation_ledger = array();
+	private static int $mutation_ledger_dropped = 0;
 
 	/**
 	 * Tool declarations keyed by Agents API client tool name.
@@ -369,6 +383,7 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 
 		$root = self::resolve_workspace_root( $context, $parameters );
 		if ( is_string( $root ) && '' === $root ) {
+			self::record_mutation( (string) $config['base'], $parameters, self::tool_error( 'workspace_root_unavailable', 'Sandbox working root is not configured or does not exist.' ) );
 			return self::error_result( $tool_name, 'Sandbox working root is not configured or does not exist.', 'workspace_root_unavailable', $config, $started_at );
 		}
 
@@ -377,6 +392,7 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 		$parameters['_wp_codebox_writable_paths'] = self::writable_paths( $context );
 		$parameters['_wp_codebox_baseline_root']  = self::baseline_root( $context );
 		$result = self::dispatch( $config['base'], $root, $parameters );
+		self::record_mutation( (string) $config['base'], $parameters, $result );
 		if ( is_array( $result ) && false === ( $result['success'] ?? true ) ) {
 			return self::error_result(
 				$tool_name,
@@ -394,6 +410,72 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 			'runtime'           => self::runtime_metadata( $config ),
 			'execution_metrics' => self::execution_metrics( $tool_name, $config, $parameters, $result, $started_at, null ),
 		);
+	}
+
+	/** Clears the per-run mutation ledger. Hosts call this before a run starts. */
+	public static function reset_mutation_ledger(): void {
+		self::$mutation_ledger         = array();
+		self::$mutation_ledger_dropped = 0;
+	}
+
+	/**
+	 * Content-free summary of workspace mutation attempts since the last reset.
+	 *
+	 * Entries hold the tool, outcome, error type, and workspace-relative target
+	 * paths only; file contents and patches are never recorded.
+	 *
+	 * @return array{schema:string,calls:array<int,array<string,mixed>>,dropped:int}
+	 */
+	public static function mutation_ledger(): array {
+		return array(
+			'schema'  => 'wp-codebox/sandbox-workspace-mutations/v1',
+			'calls'   => self::$mutation_ledger,
+			'dropped' => self::$mutation_ledger_dropped,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $parameters Tool parameters.
+	 * @param array<string,mixed> $result Dispatch result.
+	 */
+	private static function record_mutation( string $base, array $parameters, array $result ): void {
+		if ( ! in_array( $base, self::MUTATION_TOOLS, true ) ) {
+			return;
+		}
+		if ( count( self::$mutation_ledger ) >= self::MAX_MUTATION_LEDGER_ENTRIES ) {
+			++self::$mutation_ledger_dropped;
+			return;
+		}
+		$succeeded = false !== ( $result['success'] ?? true );
+		$paths     = array();
+		if ( $succeeded && is_array( $result['changed_files'] ?? null ) ) {
+			$paths = $result['changed_files'];
+		} elseif ( $succeeded && is_string( $result['path'] ?? null ) && '' !== $result['path'] ) {
+			$paths = array( $result['path'] );
+		} elseif ( 'workspace_apply_patch' === $base ) {
+			$files = is_scalar( $parameters['patch'] ?? null ) ? self::parse_unified_diff( (string) $parameters['patch'] ) : array();
+			foreach ( is_array( $files ) && ! isset( $files['error'] ) ? $files : array() as $file ) {
+				$paths[] = is_array( $file ) ? ( $file['target'] ?? $file['source'] ?? '' ) : '';
+			}
+		} else {
+			$paths = array( $parameters['path'] ?? '' );
+		}
+		$normalized = array();
+		foreach ( $paths as $path ) {
+			$relative = self::relative_param( $path );
+			if ( is_string( $relative ) && ! in_array( $relative, $normalized, true ) ) {
+				$normalized[] = $relative;
+			}
+		}
+		$entry = array(
+			'tool'   => $base,
+			'status' => $succeeded ? 'succeeded' : 'failed',
+			'paths'  => array_slice( $normalized, 0, self::MAX_MUTATION_LEDGER_PATHS ),
+		);
+		if ( ! $succeeded ) {
+			$entry['error_type'] = is_string( $result['error_type'] ?? null ) ? $result['error_type'] : 'sandbox_workspace_error';
+		}
+		self::$mutation_ledger[] = $entry;
 	}
 
 	/**
@@ -1155,12 +1237,76 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 			return self::tool_error( 'writable_path_denied', 'No writable_paths policy permits this mutation.' );
 		}
 		foreach ( $patterns as $pattern ) {
-			$pattern = ltrim( str_replace( '\\', '/', $pattern ), '/' );
-			if ( $relative === $pattern || fnmatch( $pattern, $relative, FNM_PATHNAME ) || ( str_ends_with( $pattern, '/**' ) && str_starts_with( $relative . '/', substr( $pattern, 0, -2 ) ) ) ) {
+			if ( self::writable_pattern_matches( $relative, (string) $pattern ) ) {
 				return true;
 			}
 		}
 		return self::tool_error( 'writable_path_denied', 'Sandbox workspace mutation is outside workflow writable_paths.' );
+	}
+
+	/**
+	 * Match a workspace-relative path against one writable_paths entry.
+	 *
+	 * Mirrors the host apply gate (`writablePathMatches` in runtime-core) so a
+	 * change accepted here is never silently dropped on the host: `./` and `/`
+	 * prefixes are ignored, a trailing `/**` or bare directory grants the whole
+	 * subtree, a `**` segment spans zero or more directories, and `*`, `?` and
+	 * `[...]` match within one segment.
+	 */
+	public static function writable_pattern_matches( string $relative, string $pattern ): bool {
+		$pattern = trim( str_replace( '\\', '/', $pattern ) );
+		while ( str_starts_with( $pattern, './' ) ) {
+			$pattern = substr( $pattern, 2 );
+		}
+		$pattern = rtrim( ltrim( $pattern, '/' ), '/' );
+		if ( '' === $relative || '' === $pattern || '.' === $pattern ) {
+			return false;
+		}
+		if ( $relative === $pattern ) {
+			return true;
+		}
+		if ( str_ends_with( $pattern, '/**' ) && 1 !== preg_match( '/[*?\[]/', substr( $pattern, 0, -3 ) ) ) {
+			return str_starts_with( $relative . '/', substr( $pattern, 0, -2 ) );
+		}
+		if ( 1 !== preg_match( '/[*?\[]/', $pattern ) ) {
+			return str_starts_with( $relative, $pattern . '/' );
+		}
+		$segments = explode( '/', $pattern );
+		$last     = count( $segments ) - 1;
+		$regex    = '';
+		foreach ( $segments as $index => $segment ) {
+			if ( '**' === $segment ) {
+				$regex .= $index === $last ? '(?:[^/]+(?:/[^/]+)*)' : '(?:[^/]+/)*';
+				continue;
+			}
+			$regex .= self::glob_segment_regex( $segment ) . ( $index === $last ? '' : '/' );
+		}
+		return 1 === preg_match( '#^' . $regex . '$#', $relative );
+	}
+
+	private static function glob_segment_regex( string $segment ): string {
+		$regex  = '';
+		$length = strlen( $segment );
+		for ( $i = 0; $i < $length; $i++ ) {
+			$character = $segment[ $i ];
+			if ( '*' === $character ) {
+				$regex .= '[^/]*';
+			} elseif ( '?' === $character ) {
+				$regex .= '[^/]';
+			} elseif ( '[' === $character ) {
+				$close = $i + 2 <= $length ? strpos( $segment, ']', $i + 2 ) : false;
+				if ( false === $close ) {
+					$regex .= '\\[';
+					continue;
+				}
+				$body   = str_replace( array( '\\', '#' ), array( '\\\\', '\\#' ), substr( $segment, $i + 1, $close - $i - 1 ) );
+				$regex .= ( str_starts_with( $body, '!' ) || str_starts_with( $body, '^' ) ) ? '[^/' . substr( $body, 1 ) . ']' : '[' . $body . ']';
+				$i      = $close;
+			} else {
+				$regex .= preg_quote( $character, '#' );
+			}
+		}
+		return $regex;
 	}
 
 	/**

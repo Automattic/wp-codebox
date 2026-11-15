@@ -97,6 +97,14 @@ add_filter( 'pre_http_request', static function( $preempt, $args, $url ) {
   assert.equal(result.runtime_result.agent_task_run_result.refs.changed_files.length, 1)
   assert.equal(result.runtime_result.agent_task_run_result.refs.patches.length, 1)
   assert.equal(result.runtime_result.metadata.runner_workspace_publication.pull_request.url, "https://github.com/owner/repo/pull/1")
+  // Issue #2567: the workflow result records an explicit apply outcome, joined to
+  // the sandbox's content-free write ledger.
+  assert.equal(result.workspace_apply?.schema, "wp-codebox/runner-workspace-apply-outcome/v1")
+  assert.equal(result.workspace_apply.status, "applied")
+  assert.deepEqual(result.workspace_apply.applied_paths, ["README.md"])
+  assert.deepEqual(result.workspace_apply.rejected_paths, [])
+  assert.equal(result.workspace_apply.declared_changes, 1)
+  assert.deepEqual(result.workspace_apply.write_tool_calls, { source: "sandbox-ledger", attempted: 1, succeeded: 1, failed: 0, paths: ["README.md"] })
   const serialized = JSON.stringify(result)
   for (const privateValue of ["e2e-github-secret", "e2e-openai-secret", "PRIVATE_WORKSPACE_SENTINEL", "PRIVATE_NPM_SENTINEL", "PRIVATE_NETRC_SENTINEL", "PRIVATE_KEY_SENTINEL", "PRIVATE_CODEBOX_SENTINEL", "PRIVATE_NODE_MODULES_SENTINEL", sources.root, workspace]) assert.doesNotMatch(serialized, new RegExp(privateValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   await execFileAsync(process.execPath, [uploader], { cwd: workspace, env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_REQUEST_PATH: join(workspace, ".codebox", "agent-task-request.json"), AGENT_TASK_UPLOAD_PATH: join(workspace, ".codebox", "agent-task-upload"), GITHUB_TOKEN: "e2e-github-secret", OPENAI_API_KEY: "e2e-openai-secret" } })
@@ -105,6 +113,12 @@ add_filter( 'pre_http_request', static function( $preempt, $args, $url ) {
   assert.match(exclusions.canonical_transcripts[0].provenance.artifact_path, /^runtime-[a-z0-9-]+\/files\/transcript\.json$/)
   const staged = JSON.stringify(await Promise.all((await readdir(join(workspace, ".codebox", "agent-task-upload"), { recursive: true })).map((path) => readFile(join(workspace, ".codebox", "agent-task-upload", path), "utf8").catch(() => ""))))
   assert.doesNotMatch(staged, /"tool_observability"/, "absent optional tool observability is omitted during upload staging")
+  const uploadedTranscript = JSON.parse(await readFile(join(workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "transcript.json"), "utf8"))
+  assert.deepEqual(uploadedTranscript.executions.map((execution: { parsed?: { workspace_mutations?: unknown } }) => execution.parsed?.workspace_mutations).filter(Boolean), [
+    { schema: "wp-codebox/sandbox-workspace-mutations/v1", dropped: 0, calls: [{ tool: "workspace_edit", status: "succeeded", paths: ["workspace/README.md"] }] },
+  ], "write tool names and paths reach the uploaded transcript")
+  const uploadedResult = JSON.parse(await readFile(join(workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-workflow-result.json"), "utf8"))
+  assert.equal(uploadedResult.workspace_apply.status, "applied", "the apply outcome is uploaded")
   for (const privateValue of ["wp-codebox-runner-workspace-seed-", workspace, "PRIVATE_WORKSPACE_SENTINEL", "PRIVATE_NPM_SENTINEL", "PRIVATE_NETRC_SENTINEL", "PRIVATE_KEY_SENTINEL"]) assert.doesNotMatch(staged, new RegExp(privateValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   const stagedInput = JSON.parse(await readFile(join(workspace, ".codebox", "agent-task-upload", ".codebox", "native-agent-task-input.json"), "utf8"))
   assert.deepEqual(stagedInput.task_input.workspaces[0].seed, { kind: "runner-workspace-seed", digest: seedProvenance.digest.sha256, files: 2, bytes: seedProvenance.bytes, excludes: seedProvenance.excludes, excluded: seedProvenance.excluded })
