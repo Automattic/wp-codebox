@@ -37,6 +37,10 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 	private const MUTATION_TOOLS    = array( 'workspace_write', 'workspace_edit', 'workspace_apply_patch' );
 	private const MAX_MUTATION_LEDGER_ENTRIES = 64;
 	private const MAX_MUTATION_LEDGER_PATHS   = 32;
+	private const MAX_SEED_PREIMAGES          = 512;
+	private const MAX_DIFF_BYTES              = 262144;  // 256 KB diff output cap.
+	private const MAX_DIFF_LCS_CELLS          = 4000000; // Line-diff work bound before whole-file fallback.
+	private const DIFF_CONTEXT_LINES          = 3;
 
 	/**
 	 * Content-free record of workspace mutation attempts for the current run.
@@ -48,6 +52,20 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 	 */
 	private static array $mutation_ledger = array();
 	private static int $mutation_ledger_dropped = 0;
+
+	/**
+	 * Seed pre-images for every path a mutation tool touched this run.
+	 *
+	 * Keyed by workspace-relative path; the value is the file content the path
+	 * held before its first mutation, or null when it did not exist. The seeded
+	 * sandbox snapshot deliberately excludes `.git`, so workspace_git_status and
+	 * workspace_git_diff compare against these pre-images when the host supplies
+	 * no filesystem baseline. Mutation tools are the only way the agent can change
+	 * the sandbox, so the overlay is a complete record of its changes.
+	 *
+	 * @var array<string,string|null>
+	 */
+	private static array $seed_preimages = array();
 
 	/**
 	 * Tool declarations keyed by Agents API client tool name.
@@ -220,16 +238,24 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 		'client/workspace_git_status'   => array(
 			'base'         => 'workspace_git_status',
 			'capability'   => 'workspace.files.read',
-			'description'  => 'Compare the sandbox workspace to its captured baseline without invoking git or a shell.',
+			'description'  => 'List files added, modified, or deleted in the sandbox workspace since the run started (seed baseline). Git-less: the sandbox has no .git directory.',
 			'side_effects' => array(),
 			'parameters'   => array( 'type' => 'object', 'properties' => array() ),
 		),
 		'client/workspace_git_diff'     => array(
 			'base'         => 'workspace_git_diff',
 			'capability'   => 'workspace.files.read',
-			'description'  => 'Return a bounded baseline-versus-current unified diff without invoking git or a shell.',
+			'description'  => 'Return a bounded unified diff of sandbox workspace changes since the run started (seed baseline). Git-less: the sandbox has no .git directory. Optionally limit to one path.',
 			'side_effects' => array(),
-			'parameters'   => array( 'type' => 'object', 'properties' => array() ),
+			'parameters'   => array(
+				'type'       => 'object',
+				'properties' => array(
+					'path' => array(
+						'type'        => 'string',
+						'description' => 'Optional workspace-relative file path to limit the diff to.',
+					),
+				),
+			),
 		),
 	);
 
@@ -391,6 +417,7 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 		// from arbitrary ambient tool arguments.
 		$parameters['_wp_codebox_writable_paths'] = self::writable_paths( $context );
 		$parameters['_wp_codebox_baseline_root']  = self::baseline_root( $context );
+		self::capture_seed_preimages( (string) $config['base'], $root, $parameters );
 		$result = self::dispatch( $config['base'], $root, $parameters );
 		self::record_mutation( (string) $config['base'], $parameters, $result );
 		if ( is_array( $result ) && false === ( $result['success'] ?? true ) ) {
@@ -416,6 +443,48 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 	public static function reset_mutation_ledger(): void {
 		self::$mutation_ledger         = array();
 		self::$mutation_ledger_dropped = 0;
+		self::$seed_preimages          = array();
+	}
+
+	/**
+	 * Record the pre-mutation content of every path a mutation tool may touch.
+	 *
+	 * Only the first observation of a path is kept, so the recorded content is the
+	 * seed state. Invalid or escaping paths are skipped; the tool itself rejects them.
+	 *
+	 * @param array<string,mixed> $parameters Tool parameters.
+	 */
+	private static function capture_seed_preimages( string $base, string $root, array $parameters ): void {
+		if ( ! in_array( $base, self::MUTATION_TOOLS, true ) ) {
+			return;
+		}
+		$candidates = array();
+		if ( 'workspace_apply_patch' === $base ) {
+			$files = is_scalar( $parameters['patch'] ?? null ) ? self::parse_unified_diff( (string) $parameters['patch'] ) : array();
+			foreach ( is_array( $files ) && ! isset( $files['error'] ) ? $files : array() as $file ) {
+				foreach ( array( 'source', 'target' ) as $key ) {
+					if ( is_array( $file ) && is_string( $file[ $key ] ?? null ) ) {
+						$candidates[] = $file[ $key ];
+					}
+				}
+			}
+		} else {
+			$candidates[] = $parameters['path'] ?? '';
+		}
+		foreach ( $candidates as $candidate ) {
+			$relative = self::relative_param( $candidate );
+			if ( ! is_string( $relative ) || array_key_exists( $relative, self::$seed_preimages ) ) {
+				continue;
+			}
+			if ( count( self::$seed_preimages ) >= self::MAX_SEED_PREIMAGES ) {
+				return;
+			}
+			$path = self::contained_path( $root, $relative, false );
+			if ( is_array( $path ) ) {
+				continue;
+			}
+			self::$seed_preimages[ $relative ] = is_file( $path ) ? self::read_raw( $path ) : null;
+		}
 	}
 
 	/**
@@ -1128,45 +1197,266 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 		);
 	}
 
-	/** @param array<string,mixed> $parameters @return array<string,mixed> */
+	/**
+	 * Changed paths since the run started.
+	 *
+	 * Uses the host-supplied filesystem baseline when present, otherwise the seed
+	 * pre-images recorded before each mutation. The seeded sandbox carries no .git
+	 * directory, so neither path invokes git or a shell.
+	 *
+	 * @param array<string,mixed> $parameters Tool parameters.
+	 * @return array<string,mixed>
+	 */
 	private static function workspace_status( string $root, array $parameters ): array {
-		$baseline = self::baseline_from_parameters( $parameters );
-		if ( '' === $baseline ) {
-			return self::tool_error( 'baseline_unavailable', 'Sandbox workspace baseline is unavailable.' );
+		$changes = self::workspace_changes( $root, $parameters );
+		$files   = array_keys( $changes['entries'] );
+		$counts  = array( 'added' => 0, 'modified' => 0, 'deleted' => 0 );
+		$list    = array();
+		foreach ( $changes['entries'] as $path => $entry ) {
+			++$counts[ $entry['status'] ];
+			$list[] = array( 'path' => $path, 'status' => $entry['status'] );
 		}
-		$current = self::workspace_file_map( $root );
-		$before  = self::workspace_file_map( $baseline );
-		$changed = array();
-		foreach ( array_unique( array_merge( array_keys( $before ), array_keys( $current ) ) ) as $path ) {
-			if ( ! isset( $before[ $path ] ) || ! isset( $current[ $path ] ) || ! hash_equals( $before[ $path ], $current[ $path ] ) ) {
-				$changed[] = $path;
-			}
-		}
-		sort( $changed );
-		return array( 'success' => true, 'changed' => ! empty( $changed ), 'files' => $changed, 'dirty' => count( $changed ), 'baseline' => 'filesystem' );
+		return array(
+			'success'  => true,
+			'changed'  => ! empty( $files ),
+			'files'    => $files,
+			'changes'  => $list,
+			'dirty'    => count( $files ),
+			'summary'  => $counts,
+			'baseline' => $changes['baseline'],
+		);
 	}
 
 	/** @param array<string,mixed> $parameters @return array<string,mixed> */
 	private static function workspace_diff( string $root, array $parameters ): array {
-		$status = self::workspace_status( $root, $parameters );
-		if ( empty( $status['success'] ) ) {
-			return $status;
-		}
-		$baseline = self::baseline_from_parameters( $parameters );
-		$patch = '';
-		foreach ( $status['files'] as $relative ) {
-			$before = is_file( $baseline . '/' . $relative ) ? self::read_raw( $baseline . '/' . $relative ) : '';
-			$after  = is_file( $root . '/' . $relative ) ? self::read_raw( $root . '/' . $relative ) : '';
-			if ( null === $before || null === $after || self::looks_binary( $before ) || self::looks_binary( $after ) ) {
-				return self::tool_error( 'binary_content', 'Workspace diff cannot represent binary content.' );
+		$filter = null;
+		if ( isset( $parameters['path'] ) && '' !== trim( (string) $parameters['path'] ) ) {
+			$filter = self::relative_param( $parameters['path'] );
+			if ( is_array( $filter ) ) {
+				return $filter;
 			}
-			$from = is_file( $baseline . '/' . $relative ) ? 'a/' . $relative : '/dev/null';
-			$to   = is_file( $root . '/' . $relative ) ? 'b/' . $relative : '/dev/null';
-			$patch .= "--- {$from}\n+++ {$to}\n@@ -1," . substr_count( $before, "\n" ) . " +1," . substr_count( $after, "\n" ) . " @@\n";
-			foreach ( explode( "\n", rtrim( $before, "\n" ) ) as $line ) { if ( '' !== $line || '' !== $before ) { $patch .= '-' . $line . "\n"; } }
-			foreach ( explode( "\n", rtrim( $after, "\n" ) ) as $line ) { if ( '' !== $line || '' !== $after ) { $patch .= '+' . $line . "\n"; } }
 		}
-		return array( 'success' => true, 'changed' => ! empty( $status['files'] ), 'files' => $status['files'], 'diff' => $patch, 'baseline' => 'filesystem' );
+		$changes   = self::workspace_changes( $root, $parameters );
+		$patch     = '';
+		$files     = array();
+		$skipped   = array();
+		$truncated = false;
+		foreach ( $changes['entries'] as $relative => $entry ) {
+			if ( null !== $filter && $relative !== $filter ) {
+				continue;
+			}
+			$files[] = $relative;
+			$before  = $entry['before'];
+			$after   = $entry['after'];
+			if ( self::looks_binary( (string) $before ) || self::looks_binary( (string) $after ) ) {
+				$skipped[] = array( 'path' => $relative, 'reason' => 'binary' );
+				continue;
+			}
+			$file_patch = self::unified_diff( $relative, $before, $after );
+			if ( strlen( $patch ) + strlen( $file_patch ) > self::MAX_DIFF_BYTES ) {
+				$truncated = true;
+				$skipped[] = array( 'path' => $relative, 'reason' => 'diff_size_limit' );
+				continue;
+			}
+			$patch .= $file_patch;
+		}
+		return array(
+			'success'   => true,
+			'changed'   => ! empty( $files ),
+			'files'     => $files,
+			'diff'      => $patch,
+			'truncated' => $truncated,
+			'skipped'   => $skipped,
+			'baseline'  => $changes['baseline'],
+		);
+	}
+
+	/**
+	 * Resolve changed entries with their before/after content.
+	 *
+	 * @param array<string,mixed> $parameters Tool parameters.
+	 * @return array{baseline:string,entries:array<string,array{status:string,before:?string,after:?string}>}
+	 */
+	private static function workspace_changes( string $root, array $parameters ): array {
+		$entries  = array();
+		$baseline = self::baseline_from_parameters( $parameters );
+		if ( '' !== $baseline ) {
+			$current = self::workspace_file_map( $root );
+			$before  = self::workspace_file_map( $baseline );
+			$paths   = array_unique( array_merge( array_keys( $before ), array_keys( $current ) ) );
+			foreach ( $paths as $path ) {
+				if ( isset( $before[ $path ], $current[ $path ] ) && hash_equals( $before[ $path ], $current[ $path ] ) ) {
+					continue;
+				}
+				$entries[ $path ] = array(
+					'before' => isset( $before[ $path ] ) ? self::read_raw( $baseline . '/' . $path ) : null,
+					'after'  => isset( $current[ $path ] ) ? self::read_raw( $root . '/' . $path ) : null,
+				);
+			}
+			$kind = 'filesystem';
+		} else {
+			foreach ( self::$seed_preimages as $path => $original ) {
+				$file    = $root . '/' . $path;
+				$current = is_file( $file ) ? self::read_raw( $file ) : null;
+				if ( $current === $original ) {
+					continue;
+				}
+				$entries[ $path ] = array( 'before' => $original, 'after' => $current );
+			}
+			$kind = 'seed';
+		}
+		ksort( $entries, SORT_STRING );
+		foreach ( $entries as $path => $entry ) {
+			$entries[ $path ]['status'] = null === $entry['before'] ? 'added' : ( null === $entry['after'] ? 'deleted' : 'modified' );
+		}
+		return array( 'baseline' => $kind, 'entries' => $entries );
+	}
+
+	/**
+	 * Unified diff for one file with context hunks (git-style headers).
+	 */
+	private static function unified_diff( string $relative, ?string $before, ?string $after ): string {
+		$from = null === $before ? '/dev/null' : 'a/' . $relative;
+		$to   = null === $after ? '/dev/null' : 'b/' . $relative;
+		$old  = self::diff_lines( (string) $before );
+		$new  = self::diff_lines( (string) $after );
+		$ops  = self::diff_ops( $old, $new );
+
+		$out     = "--- {$from}\n+++ {$to}\n";
+		$context = self::DIFF_CONTEXT_LINES;
+		$count   = count( $ops );
+		$index   = 0;
+		while ( $index < $count ) {
+			if ( ' ' === $ops[ $index ][0] ) {
+				++$index;
+				continue;
+			}
+			// Hunk spans from $context lines before the first change through
+			// $context lines after the last change that is within 2*$context.
+			$start = max( 0, $index - $context );
+			$end   = $index;
+			$scan  = $index;
+			while ( $scan < $count ) {
+				if ( ' ' !== $ops[ $scan ][0] ) {
+					$end = $scan;
+					++$scan;
+					continue;
+				}
+				$run = $scan;
+				while ( $run < $count && ' ' === $ops[ $run ][0] ) {
+					++$run;
+				}
+				if ( $run >= $count || $run - $scan > 2 * $context ) {
+					break;
+				}
+				$scan = $run;
+			}
+			$stop = min( $count - 1, $end + $context );
+
+			$old_start = 1;
+			$new_start = 1;
+			for ( $k = 0; $k < $start; ++$k ) {
+				if ( '+' !== $ops[ $k ][0] ) {
+					++$old_start;
+				}
+				if ( '-' !== $ops[ $k ][0] ) {
+					++$new_start;
+				}
+			}
+			$old_len = 0;
+			$new_len = 0;
+			$body    = '';
+			for ( $k = $start; $k <= $stop; ++$k ) {
+				if ( '+' !== $ops[ $k ][0] ) {
+					++$old_len;
+				}
+				if ( '-' !== $ops[ $k ][0] ) {
+					++$new_len;
+				}
+				$body .= $ops[ $k ][0] . $ops[ $k ][1] . "\n";
+			}
+			$out  .= sprintf( "@@ -%d,%d +%d,%d @@\n", 0 === $old_len ? $old_start - 1 : $old_start, $old_len, 0 === $new_len ? $new_start - 1 : $new_start, $new_len );
+			$out  .= $body;
+			$index = $stop + 1;
+		}
+		return $out;
+	}
+
+	/** @return array<int,string> */
+	private static function diff_lines( string $content ): array {
+		if ( '' === $content ) {
+			return array();
+		}
+		return explode( "\n", str_ends_with( $content, "\n" ) ? substr( $content, 0, -1 ) : $content );
+	}
+
+	/**
+	 * Line edit script (LCS). Falls back to delete-all/add-all past the work bound.
+	 *
+	 * @param array<int,string> $old Old lines.
+	 * @param array<int,string> $new New lines.
+	 * @return array<int,array{0:string,1:string}>
+	 */
+	private static function diff_ops( array $old, array $new ): array {
+		// Trim the common prefix and suffix so the LCS table only covers the changed core.
+		$prefix = 0;
+		$n      = count( $old );
+		$m      = count( $new );
+		while ( $prefix < $n && $prefix < $m && $old[ $prefix ] === $new[ $prefix ] ) {
+			++$prefix;
+		}
+		$suffix = 0;
+		while ( $suffix < $n - $prefix && $suffix < $m - $prefix && $old[ $n - 1 - $suffix ] === $new[ $m - 1 - $suffix ] ) {
+			++$suffix;
+		}
+		$ops = array();
+		for ( $i = 0; $i < $prefix; ++$i ) {
+			$ops[] = array( ' ', $old[ $i ] );
+		}
+		$a = array_slice( $old, $prefix, $n - $prefix - $suffix );
+		$b = array_slice( $new, $prefix, $m - $prefix - $suffix );
+		$x = count( $a );
+		$y = count( $b );
+		if ( $x * $y > self::MAX_DIFF_LCS_CELLS ) {
+			foreach ( $a as $line ) {
+				$ops[] = array( '-', $line );
+			}
+			foreach ( $b as $line ) {
+				$ops[] = array( '+', $line );
+			}
+		} else {
+			$lcs = array_fill( 0, $x + 1, array_fill( 0, $y + 1, 0 ) );
+			for ( $i = $x - 1; $i >= 0; --$i ) {
+				for ( $j = $y - 1; $j >= 0; --$j ) {
+					$lcs[ $i ][ $j ] = $a[ $i ] === $b[ $j ] ? $lcs[ $i + 1 ][ $j + 1 ] + 1 : max( $lcs[ $i + 1 ][ $j ], $lcs[ $i ][ $j + 1 ] );
+				}
+			}
+			$i = 0;
+			$j = 0;
+			while ( $i < $x && $j < $y ) {
+				if ( $a[ $i ] === $b[ $j ] ) {
+					$ops[] = array( ' ', $a[ $i ] );
+					++$i;
+					++$j;
+				} elseif ( $lcs[ $i + 1 ][ $j ] >= $lcs[ $i ][ $j + 1 ] ) {
+					$ops[] = array( '-', $a[ $i ] );
+					++$i;
+				} else {
+					$ops[] = array( '+', $b[ $j ] );
+					++$j;
+				}
+			}
+			for ( ; $i < $x; ++$i ) {
+				$ops[] = array( '-', $a[ $i ] );
+			}
+			for ( ; $j < $y; ++$j ) {
+				$ops[] = array( '+', $b[ $j ] );
+			}
+		}
+		for ( $i = $n - $suffix; $i < $n; ++$i ) {
+			$ops[] = array( ' ', $old[ $i ] );
+		}
+		return $ops;
 	}
 
 	/** @return array<string,string> */

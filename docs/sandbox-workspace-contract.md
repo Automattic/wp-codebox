@@ -29,3 +29,32 @@ the mounted workspace. Read-only source-host abilities may be exposed for contex
 Push, deploy, worktree lifecycle, source sync, PR creation, issue mutation, comments,
 merge, cleanup, and apply-back operations stay parent-only. The sandbox produces
 artifacts; the parent site decides whether and how to apply them.
+
+## Workspace status and diff tools
+
+The seeded runner workspace is a filtered snapshot: `.git/**` is excluded (see
+[Runner Workspace Seed Policy](runner-workspace-seed-policy.md)), and the sandbox
+tools never invoke `git` or a shell. `workspace_git_status` and
+`workspace_git_diff` therefore compare the workspace against its **seed
+baseline**, not a git `HEAD`:
+
+- Before a mutation tool (`workspace_write`, `workspace_edit`,
+  `workspace_apply_patch`) first touches a path, the executor records that path's
+  seed content (or that it did not exist). Mutation tools are the only way an
+  agent can change the sandbox, so this overlay is a complete record of the run's
+  changes. `reset_mutation_ledger()` clears it at the start of each run.
+- When the host supplies a filesystem baseline (`workspace_baseline_root` in the
+  executor context), that full tree is used instead.
+- `workspace_git_status` returns `files` (sorted paths), `changes`
+  (`{path, status}` with `added`, `modified`, or `deleted`), a `summary` count,
+  and `baseline: "seed"` or `"filesystem"`. A file rewritten with identical
+  content is clean.
+- `workspace_git_diff` returns a unified diff with git-style `a/`/`b/` headers,
+  `/dev/null` for adds and deletes, and 3-line context hunks, so it applies with
+  `workspace_apply_patch`. An optional `path` limits it to one file. Output is
+  capped at 256 KB; files past the cap or with binary content are listed in
+  `skipped` and `truncated` is set.
+
+Before v0.33.7 neither tool had a baseline in runtime-package runs, so every
+call failed with `tool_call_failed` (`baseline_unavailable`)
+([#2591](https://github.com/Automattic/wp-codebox/issues/2591)).

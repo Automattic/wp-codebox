@@ -286,6 +286,84 @@ namespace {
 		assert_true( $expected === WP_Codebox_Sandbox_Workspace_Executor::writable_pattern_matches( $path, $pattern ), "writable pattern parity: {$path} vs {$pattern}" );
 	}
 
+	// -----------------------------------------------------------------
+	// Production shape: the seeded sandbox snapshot excludes .git and the host
+	// supplies no filesystem baseline. Status/diff must still work against the
+	// seed state, captured before each file's first mutation (wp-codebox#2591).
+	// -----------------------------------------------------------------
+	$seed_root = sys_get_temp_dir() . '/wp-codebox-sandbox-seed-' . bin2hex( random_bytes( 6 ) );
+	mkdir( $seed_root . '/docs', 0755, true );
+	$guide_lines = array();
+	for ( $line = 1; $line <= 40; ++$line ) {
+		$guide_lines[] = "Line {$line} of the guide.";
+	}
+	$guide = implode( "\n", $guide_lines ) . "\n";
+	file_put_contents( $seed_root . '/docs/guide.md', $guide );
+	file_put_contents( $seed_root . '/docs/old.md', "# Old\n" );
+	file_put_contents( $seed_root . '/docs/untouched.md', "# Untouched\n" );
+	$seed_real    = (string) realpath( $seed_root );
+	$seed_context = array( 'workspace_root' => $seed_real, 'writable_paths' => array( 'docs/**' ) );
+	$seed_call    = static function ( string $tool_name, array $parameters ) use ( $executor, $seed_context ): array {
+		return $executor->executeWP_Agent_Tool_Call( array( 'tool_name' => $tool_name, 'parameters' => $parameters ), array( 'name' => $tool_name ), $seed_context );
+	};
+	WP_Codebox_Sandbox_Workspace_Executor::reset_mutation_ledger();
+
+	$clean = $seed_call( 'workspace_git_status', array() );
+	assert_true( true === $clean['success'], 'seed status succeeds without .git or a filesystem baseline' );
+	assert_true( false === $clean['result']['changed'] && array() === $clean['result']['files'], 'seed status is clean before any mutation' );
+	assert_true( 'seed' === $clean['result']['baseline'], 'seed status reports the seed baseline' );
+	$clean_diff = $seed_call( 'workspace_git_diff', array() );
+	assert_true( true === $clean_diff['success'] && '' === $clean_diff['result']['diff'], 'seed diff is empty before any mutation' );
+
+	$seed_call( 'workspace_edit', array( 'path' => 'docs/guide.md', 'old_string' => 'Line 20 of the guide.', 'new_string' => 'Line twenty of the guide.' ) );
+	$seed_call( 'workspace_edit', array( 'path' => 'docs/guide.md', 'old_string' => 'Line 21 of the guide.', 'new_string' => "Line 21 of the guide.\nAn added line." ) );
+	$seed_call( 'workspace_write', array( 'path' => 'docs/new.md', 'content' => "# New\n" ) );
+	$seed_call( 'workspace_apply_patch', array( 'patch' => "--- a/docs/old.md\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-# Old\n" ) );
+	$seed_call( 'workspace_write', array( 'path' => 'docs/untouched.md', 'content' => "# Untouched\n" ) );
+	$failed_edit = $seed_call( 'workspace_edit', array( 'path' => 'docs/untouched.md', 'old_string' => 'missing', 'new_string' => 'x' ) );
+	assert_true( false === $failed_edit['success'], 'failed edit stays failed' );
+
+	$seed_status = $seed_call( 'workspace_git_status', array() );
+	assert_true( true === $seed_status['success'], 'seed status succeeds after mutations' );
+	assert_true( array( 'docs/guide.md', 'docs/new.md', 'docs/old.md' ) === $seed_status['result']['files'], 'seed status lists modified, added, and deleted files; rewrites with identical content are clean' );
+	assert_true(
+		array(
+			array( 'path' => 'docs/guide.md', 'status' => 'modified' ),
+			array( 'path' => 'docs/new.md', 'status' => 'added' ),
+			array( 'path' => 'docs/old.md', 'status' => 'deleted' ),
+		) === $seed_status['result']['changes'],
+		'seed status classifies each change'
+	);
+	assert_true( array( 'added' => 1, 'modified' => 1, 'deleted' => 1 ) === $seed_status['result']['summary'], 'seed status summarizes change counts' );
+
+	$seed_diff = $seed_call( 'workspace_git_diff', array() );
+	assert_true( true === $seed_diff['success'], 'seed diff succeeds after mutations' );
+	$diff_text = $seed_diff['result']['diff'];
+	assert_true( str_contains( $diff_text, "--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -17,8 +17,9 @@\n" ), 'seed diff emits a context hunk, not a whole-file rewrite' );
+	assert_true( str_contains( $diff_text, "-Line 20 of the guide.\n+Line twenty of the guide.\n Line 21 of the guide.\n+An added line.\n" ), 'seed diff shows the exact changed lines' );
+	assert_true( ! str_contains( $diff_text, 'Line 1 of the guide.' ) && ! str_contains( $diff_text, 'Line 40 of the guide.' ), 'seed diff omits unchanged lines outside context' );
+	assert_true( str_contains( $diff_text, "--- /dev/null\n+++ b/docs/new.md\n@@ -0,0 +1,1 @@\n+# New\n" ), 'seed diff shows added files' );
+	assert_true( str_contains( $diff_text, "--- a/docs/old.md\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-# Old\n" ), 'seed diff shows deleted files' );
+
+	$one_diff = $seed_call( 'workspace_git_diff', array( 'path' => 'docs/new.md' ) );
+	assert_true( array( 'docs/new.md' ) === $one_diff['result']['files'] && ! str_contains( $one_diff['result']['diff'], 'guide.md' ), 'seed diff honors the optional path filter' );
+
+	// The seed diff is a valid patch: reverting it onto a fresh seed copy reproduces the edited workspace.
+	$replay_root = sys_get_temp_dir() . '/wp-codebox-sandbox-replay-' . bin2hex( random_bytes( 6 ) );
+	mkdir( $replay_root . '/docs', 0755, true );
+	file_put_contents( $replay_root . '/docs/guide.md', $guide );
+	file_put_contents( $replay_root . '/docs/old.md', "# Old\n" );
+	$replay_real    = (string) realpath( $replay_root );
+	$replay_context = array( 'workspace_root' => $replay_real, 'writable_paths' => array( 'docs/**' ) );
+	$replayed       = $executor->executeWP_Agent_Tool_Call( array( 'tool_name' => 'workspace_apply_patch', 'parameters' => array( 'patch' => $diff_text ) ), array( 'name' => 'workspace_apply_patch' ), $replay_context );
+	assert_true( true === $replayed['success'], 'seed diff applies cleanly as a patch' );
+	assert_true( file_get_contents( $seed_real . '/docs/guide.md' ) === file_get_contents( $replay_real . '/docs/guide.md' ), 'replayed seed diff reproduces the edited file' );
+	assert_true( is_file( $replay_real . '/docs/new.md' ) && ! is_file( $replay_real . '/docs/old.md' ), 'replayed seed diff reproduces adds and deletes' );
+
+	WP_Codebox_Sandbox_Workspace_Executor::reset_mutation_ledger();
+	$after_reset = $seed_call( 'workspace_git_status', array() );
+	assert_true( false === $after_reset['result']['changed'], 'reset clears the seed baseline for the next run' );
+
 	// Cleanup.
 	$rrmdir = static function ( string $dir ) use ( &$rrmdir ): void {
 		foreach ( scandir( $dir ) ?: array() as $entry ) {
@@ -299,6 +377,8 @@ namespace {
 	};
 	$rrmdir( $root_real );
 	$rrmdir( $baseline );
+	$rrmdir( $seed_real );
+	$rrmdir( $replay_real );
 
 	fwrite( STDOUT, "OK php-sandbox-workspace-executor-smoke\n" );
 }

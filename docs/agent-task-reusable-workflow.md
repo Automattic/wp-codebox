@@ -135,6 +135,30 @@ Publication results record the effective head branch and resolved base SHA. An
 existing branch is extended only for an exact open pull request that descends
 from that base; otherwise publication starts a base-SHA-suffixed fresh branch.
 
+### Publication branch, title, and body
+
+`runner_workspace` controls what the published pull request looks like:
+
+- `branch` (alias `head_branch`): the head branch, used **exactly as given**.
+  The workload id is never appended to it.
+- `branch_prefix`: used only when `branch` is absent. The head is
+  `branch_prefix` + run id (`run_id`, else `workload_id`). The two are joined
+  with `-` unless the prefix already ends in `/`, `-`, `_`, or `.`. The default
+  prefix is `wp-codebox/agent-task/`.
+- Fresh-branch rule: if the head branch exists but has no exact open pull request
+  for the base, publication uses `<head>-<base-sha-12>` instead. The suffix is
+  added once, to whichever head the rules above produced.
+- `title`: pull request title. Defaults to `workload_label`. Set it; generic
+  labels such as "Run Docs Agent" make poor PR titles.
+- `commit_message`: commit message. Defaults to `workload_label`.
+- `body`: pull request body. WP Codebox appends a `### Changed files (N)` list
+  of the published paths, marking deletions, when it opens the pull request.
+
+Before v0.33.7 the head was always `branch_prefix` + workload id with no
+separator, so a caller passing its branch as the prefix got names such as
+`docs-agent/upkeepdocs-agent-user-maintenance`
+([#2591](https://github.com/Automattic/wp-codebox/issues/2591)).
+
 ## Outputs
 
 - `job_status`: normalized terminal status.
