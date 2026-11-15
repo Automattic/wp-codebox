@@ -125,6 +125,12 @@ final class WP_Codebox_Runtime_Package_Executor {
 		}
 		$input['runtime_package_task'] = $task;
 		$input['run_id']               = $this->runtime_run_id( $input );
+		$turn_limit                     = $this->resolve_turn_limit( $input );
+		if ( null !== $turn_limit['max_turns'] ) {
+			// agents/chat resolves input.max_turns before the agent default config,
+			// so an explicit caller limit always overrides the package default.
+			$input['max_turns'] = $turn_limit['max_turns'];
+		}
 		$workspace_context              = $this->sandbox_workspace_context( $input );
 		$ability_object = function_exists( 'wp_get_ability' ) ? wp_get_ability( $ability ) : null;
 		if ( ! is_object( $ability_object ) || ! method_exists( $ability_object, 'execute' ) ) {
@@ -176,7 +182,119 @@ final class WP_Codebox_Runtime_Package_Executor {
 			)
 		);
 
+		return $this->result_with_turn_limit( $result, $turn_limit );
+	}
+
+	/**
+	 * Resolves the effective agent-loop turn limit for a runtime package run.
+	 *
+	 * An explicit positive caller `max_turns` wins. Otherwise the imported
+	 * package's `meta.default_max_turns` applies. When neither is declared the
+	 * agents/chat handler default is left in place.
+	 *
+	 * @param array<string,mixed> $input Workflow input.
+	 * @return array{max_turns:int|null,source:string}
+	 */
+	private function resolve_turn_limit( array $input ): array {
+		$caller = $this->positive_int( $input['max_turns'] ?? null );
+		if ( null !== $caller ) {
+			return array( 'max_turns' => $caller, 'source' => 'caller' );
+		}
+		$agent = function_exists( 'wp_get_agent' ) ? wp_get_agent( (string) ( $input['agent'] ?? '' ) ) : null;
+		$meta  = is_object( $agent ) && method_exists( $agent, 'get_meta' ) ? $agent->get_meta() : array();
+		$package_default = $this->positive_int( is_array( $meta ) ? ( $meta['default_max_turns'] ?? null ) : null );
+		if ( null !== $package_default ) {
+			return array( 'max_turns' => $package_default, 'source' => 'package_default' );
+		}
+
+		return array( 'max_turns' => null, 'source' => 'runtime_default' );
+	}
+
+	/**
+	 * Records whether the agent loop stopped at its turn cap without a final answer.
+	 *
+	 * The Agents API loop ends a synthesized max_turns budget silently and still
+	 * reports `completed: true`, so the cap is detected here: the loop ran every
+	 * allowed turn and the final turn was still issuing tool calls (the model
+	 * never got a turn to answer). An explicit `max_turns` stop reason is honored
+	 * as well. A reached cap becomes a canonical `max_turns` terminal result.
+	 *
+	 * @param array<string,mixed>                   $result     Workflow result.
+	 * @param array{max_turns:int|null,source:string} $turn_limit Resolved turn limit.
+	 * @return array<string,mixed>
+	 */
+	private function result_with_turn_limit( array $result, array $turn_limit ): array {
+		$metadata   = is_array( $result['metadata'] ?? null ) ? $result['metadata'] : array();
+		$agents_api = is_array( $metadata['agents_api'] ?? null ) ? $metadata['agents_api'] : array();
+		$outcome    = is_array( $agents_api['run_outcome'] ?? null ) ? $agents_api['run_outcome'] : array();
+		$turn_count = $this->positive_int( $agents_api['turn_count'] ?? null );
+		$max_turns  = $turn_limit['max_turns'];
+		$calls      = is_array( $agents_api['tool_observability']['calls'] ?? null ) ? $agents_api['tool_observability']['calls'] : array();
+		$final_turn_tool_calls = 0;
+		foreach ( $calls as $call ) {
+			if ( is_array( $call ) && null !== $turn_count && (int) ( $call['turn'] ?? 0 ) === $turn_count ) {
+				++$final_turn_tool_calls;
+			}
+		}
+		$explicit_stop = 'max_turns' === (string) ( $outcome['stop_reason'] ?? '' );
+		$cap_exhausted = null !== $max_turns && null !== $turn_count && $turn_count >= $max_turns && $final_turn_tool_calls > 0;
+		$reached       = $explicit_stop || $cap_exhausted;
+
+		$result['metadata'] = array_merge(
+			$metadata,
+			array(
+				'turn_limit' => array(
+					'schema'                => 'wp-codebox/agent-turn-limit/v1',
+					'max_turns'             => $max_turns,
+					'source'                => $turn_limit['source'],
+					'turn_count'            => $turn_count,
+					'final_turn_tool_calls' => $final_turn_tool_calls,
+					'max_turns_reached'     => $reached,
+				),
+			)
+		);
+		if ( ! $reached ) {
+			return $result;
+		}
+
+		$diagnostics               = is_array( $result['diagnostics'] ?? null ) ? $result['diagnostics'] : array();
+		$diagnostics[]             = array(
+			'schema'   => 'wp-codebox/runtime-package-diagnostic/v1',
+			'code'     => 'max_turns_exceeded',
+			'message'  => null !== $max_turns
+				? sprintf( 'The agent reached its %d-turn limit before producing a final answer.', $max_turns )
+				: 'The agent reached its turn limit before producing a final answer.',
+			'severity' => 'error',
+			'path'     => 'workflow',
+		);
+		$result['diagnostics']     = $diagnostics;
+		$result['success']         = false;
+		$result['terminal_result'] = array(
+			'schema'                 => 'wp-codebox/agent-terminal-result/v1',
+			'terminal'               => true,
+			'status'                 => 'max_turns',
+			'success'                => false,
+			'failure_classification' => 'max_turns',
+			'max_turns'              => array_filter(
+				array(
+					'reached' => true,
+					'current' => $turn_count,
+					'max'     => $max_turns,
+				),
+				static fn( mixed $value ): bool => null !== $value
+			),
+		);
+
 		return $result;
+	}
+
+	private function positive_int( mixed $value ): ?int {
+		if ( is_int( $value ) || ( is_string( $value ) && ctype_digit( trim( $value ) ) ) || ( is_float( $value ) && floor( $value ) === $value ) ) {
+			$int = (int) $value;
+			return $int > 0 ? $int : null;
+		}
+
+		return null;
 	}
 
 	/** @param array<string,mixed> $input @return array<string,mixed> */

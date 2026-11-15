@@ -69,7 +69,7 @@ async function run(mode = "success") {
       { command: verificationCommand, ...(mode !== "artifact-drift" && commandArtifact ? { artifact: commandArtifact } : {}) },
     ],
     drift_checks: [{ command: driftCommand, ...(mode === "artifact-drift" && commandArtifact ? { artifact: commandArtifact } : {}) }],
-    success: { requires_pr: mode !== "no-op-maintenance" },
+    success: { requires_pr: mode !== "no-op-maintenance" && mode !== "max-turns-maintenance" },
     access: {
       caller_repo: targetRepo,
       allowed_repos: [targetRepo],
@@ -84,7 +84,7 @@ async function run(mode = "success") {
     },
     outputs: {
       projections: {
-        pr_url: mode === "no-op-maintenance"
+        pr_url: mode === "no-op-maintenance" || mode === "max-turns-maintenance"
           ? { path: "metadata.runner_workspace_publication.pull_request.url", required: false }
           : "metadata.runner_workspace_publication.pull_request.url",
       },
@@ -96,7 +96,12 @@ async function run(mode = "success") {
   await writeFile(join(workspace, ".codebox", "agent-task-request.json"), JSON.stringify(request))
 
   const fakeCli = join(temp, "fake-cli.mjs")
-  const noOp = mode.startsWith("no-op")
+  const noOp = mode.startsWith("no-op") || mode === "max-turns-maintenance"
+  // max-turns: the runtime package reports a canonical max_turns terminal result.
+  // max-turns-maintenance: the run 43726382831 shape, a "successful" no-op whose
+  // only evidence of the cap is the loop's final-turn tool calls.
+  const maxTurnsTerminal = mode === "max-turns"
+  const maxTurnsObserved = mode === "max-turns-maintenance"
   const mismatch = mode === "mismatch"
   const applyReject = mode === "apply-reject"
   await writeFile(fakeCli, `
@@ -123,10 +128,13 @@ if (trustedRoot) {
  }
 ${mismatch ? "await writeFile(join(process.cwd(), \"README.md\"), \"diverged\\n\")" : ""}
 await writeFile(join(process.cwd(), ".codebox", "order"), "runtime\\n")
+await writeFile(join(process.cwd(), ".codebox", "runtime-chat-input.json"), JSON.stringify(input.task_input.runtime_task.input.input))
+const terminal = ${maxTurnsTerminal} ? { schema: "wp-codebox/agent-terminal-result/v1", terminal: true, status: "max_turns", success: false, failure_classification: "max_turns", max_turns: { reached: true, current: 1, max: 1 } } : undefined
 const summary = {
   schema: "wp-codebox/agent-task-run-result/v1",
-  success: true,
-  status: "succeeded",
+  success: !${maxTurnsTerminal},
+  status: ${maxTurnsTerminal} ? "timeout" : "succeeded",
+  ...(terminal ? { terminal_result: terminal, failure_classification: "max_turns" } : {}),
   refs: {
     patches: [{ kind: "codebox-patch", path: join(root, "patch.diff") }],
     changed_files: [{ kind: "codebox-changed-files", path: join(root, "changed-files.json") }],
@@ -134,15 +142,16 @@ const summary = {
 }
 const result = {
   schema: "wp-codebox/agent-task-run/v1",
-  success: true,
-  status: "succeeded",
+  success: !${maxTurnsTerminal},
+  status: ${maxTurnsTerminal} ? "timeout" : "succeeded",
+  ...(terminal ? { terminal_result: terminal } : {}),
   agent_task_run_result: summary,
   agent_result: {
     artifacts: { directory: root },
     changedFiles: { artifact: "changed-files.json", bytes: ${noOp} ? 0 : 1 },
     patch: { artifact: "patch.diff", bytes: ${noOp} ? 0 : 1 },
   },
-  metadata: { imported_agent: { slug: "fixture-agent" }, tool_contract: { tools: ["workspace_read", "workspace_edit"] } },
+  metadata: { imported_agent: { slug: "fixture-agent" }, tool_contract: { tools: ["workspace_read", "workspace_edit"] }, ...(${maxTurnsObserved} ? { agents_api: { tool_observability: { version: 1, calls: [{ sequence: 1, turn: 1, tool_call_id: "call-1", tool_name: "workspace_read", status: "succeeded", arguments: { keys: ["path"], count: 1, redacted: true } }] } } } : {}) },
   agent_runtime_diagnostics: { prepared_paths: { workspaces: input.task_input.workspaces.map((workspace) => ({ target: workspace.target, mode: workspace.mode, metadata: { baselineSource: "fixture-baseline", workspaceRoot: "/workspace", sourceMode: workspace.sourceMode } })) }, sandbox_workspace: { mounts: input.task_input.workspaces.map((workspace) => ({ target: workspace.target })) }, local_executor_root: "/workspace" },
 }
 await writeFile(output, JSON.stringify(result))
@@ -211,6 +220,9 @@ process.stdout.write(JSON.stringify({
 
 const success = await run()
 assert.equal(success.code, 0, `${success.stderr}\n${JSON.stringify(success.result)}`)
+assert.equal(JSON.parse(await readFile(join(success.workspace, ".codebox", "runtime-chat-input.json"), "utf8")).max_turns, 1, "the caller's max_turns reaches the runtime package agents/chat input")
+assert.equal(success.result.terminal_status, undefined)
+assert.equal(success.result.agent_turn_limit?.status ?? "within_limit", "within_limit")
 assert.equal(await readFile(join(success.workspace, "README.md"), "utf8"), "OPENAI_API_KEY\nafter\n")
 const durablePatch = await readFile(join(success.workspace, ".codebox", "agent-task-artifacts", "files", "patch.diff"), "utf8")
 assert(!durablePatch.includes("OPENAI_API_KEY"), "durable patch artifacts redact configured secret values")
@@ -376,5 +388,37 @@ await execFileAsync(process.execPath, [uploader], {
 })
 assert.match(await readFile(join(applyReject.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "rejected.patch"), "utf8"), /-not-before/)
 assert.match(await readFile(join(applyReject.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "changed-files.json"), "utf8"), /README\.md/)
+
+for (const mode of ["max-turns", "max-turns-maintenance"]) {
+  const capped = await run(mode)
+  assert.equal(capped.code, 1, `${mode} must not be a green no-op`)
+  assert.equal(capped.result.status, "failed")
+  assert.equal(capped.result.success, false)
+  assert.equal(capped.result.terminal_status, "max_turns")
+  assert.equal(capped.result.failure.stage, "agent")
+  assert.equal(capped.result.failure.code, "max_turns_exceeded")
+  assert.equal(capped.result.failure.classification, "max_turns")
+  assert.equal(capped.result.failure.max_turns, 1)
+  assert.match(capped.result.failure.message, /1-turn limit before producing a final answer/)
+  assert.equal(capped.result.agent_turn_limit.status, "max_turns")
+  assert.equal(capped.result.agent_turn_limit.source, mode === "max-turns" ? "terminal-result" : "tool-observability")
+  assert.equal(capped.result.workspace_apply.status, "skipped", "partial work from a turn-capped agent is never applied")
+  assert.equal(capped.result.verification.length, 0, "verification does not run for a turn-capped agent")
+  assert(!capped.order.includes("publish"))
+  assert.equal(await readFile(join(capped.workspace, "README.md"), "utf8"), "OPENAI_API_KEY\nbefore\n")
+  await execFileAsync(process.execPath, [uploader], {
+    cwd: capped.workspace,
+    env: {
+      ...process.env,
+      AGENT_TASK_WORKSPACE: capped.workspace,
+      AGENT_TASK_REQUEST_PATH: join(capped.workspace, ".codebox", "agent-task-request.json"),
+      AGENT_TASK_UPLOAD_PATH: join(capped.workspace, ".codebox", "agent-task-upload"),
+    },
+  })
+  const uploaded = JSON.parse(await readFile(join(capped.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-workflow-result.json"), "utf8"))
+  assert.equal(uploaded.terminal_status, "max_turns", "the uploaded result reports the turn cap")
+  assert.equal(uploaded.agent_turn_limit.status, "max_turns")
+  assert.equal(uploaded.failure.code, "max_turns_exceeded")
+}
 
 console.log("native agent task lifecycle ok")
