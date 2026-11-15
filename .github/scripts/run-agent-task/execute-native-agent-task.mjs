@@ -10,6 +10,7 @@ import { readNativeResult } from "./native-result-file.mjs"
 import { assertNoRuntimeSourcePaths, sanitizeArtifactUploadText, sanitizeRuntimeSourceJson, sanitizeRuntimeSourceText, sanitizeRuntimeSourceValue } from "./runtime-source-sanitizer.mjs"
 import { publishRunnerWorkspace } from "./runner-workspace-publisher.mjs"
 import { createRunnerWorkspaceSeedSnapshot, RUNNER_WORKSPACE_SEED_EXCLUDES } from "./runner-workspace-seed-snapshot.mjs"
+import { runnerWorkspaceApplyOutcome, sandboxWorkspaceMutations } from "./runner-workspace-apply-outcome.mjs"
 import { createTrustedArtifactApplyChannel, trustedArtifactApplyRefs } from "./trusted-artifact-snapshot.mjs"
 import { artifactSourcePathCategory, assertNoSeedSnapshotPaths, containsRuntimeSourceContent, sanitizeSeedSnapshotJson } from "./artifact-upload-policy.mjs"
 import { publishProcessMarker } from "../../../scripts/process-marker.mjs"
@@ -806,6 +807,7 @@ if (toolObservability) {
 }
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 let workspaceApply = { status: "no-op", changedFiles: [] }
+let applyError
 let workspaceEvidence
 let runnerWorkspaceCore = null
 let downstreamFailure = null
@@ -819,8 +821,17 @@ if (execution.code === 0 && runtimeResult.success === true && request.runner_wor
     const trustedArtifacts = await trustedArtifactApplyRefs(trustedApplyArtifactRoot, refs)
     workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: trustedArtifacts.root, artifactRefs: trustedArtifacts.refs, workspaceRoot: workspace, writablePaths, seedIdentity: runnerWorkspaceSeedSnapshot?.provenance.identity })
   } catch (error) {
-    downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES), ...(error?.evidence ? { evidence: error.evidence } : {}) }
+    applyError = error
+    downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES), ...(Array.isArray(error?.rejectedPaths) ? { rejected_paths: error.rejectedPaths } : {}), ...(error?.evidence ? { evidence: error.evidence } : {}) }
   }
+}
+const workspaceApplyOutcome = request.runner_workspace?.enabled && request.run_agent && !request.dry_run
+  ? runnerWorkspaceApplyOutcome({ workspaceApply, applyError, bound: (value) => bounded(value, MAX_WORKFLOW_OUTPUT_BYTES), attempted: Boolean(runnerWorkspaceCore) || Boolean(applyError), mutations: sandboxWorkspaceMutations(nativeRuntimeResult), toolObservability })
+  : undefined
+if (workspaceApplyOutcome?.status === "writes-not-applied") {
+  // Never let successful agent writes vanish behind a vacuous no-op: the
+  // canonical patch declared nothing even though the sandbox accepted writes.
+  downstreamFailure ??= { stage: "apply", message: workspaceApplyOutcome.message, unapplied_paths: workspaceApplyOutcome.write_tool_calls.paths }
 }
 if (trustedApplyArtifactRoot) {
   await rm(trustedApplyArtifactRoot, { recursive: true, force: true })
@@ -937,6 +948,7 @@ const result = {
     } : {}),
   },
   runtime_result: redact(runtimeRecord),
+  ...(workspaceApplyOutcome ? { workspace_apply: workspaceApplyOutcome } : {}),
   ...(reviewerEvidence ? { reviewer_evidence: reviewerEvidence } : {}),
   verification,
   publication,

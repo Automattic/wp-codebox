@@ -149,6 +149,7 @@ final class WP_Codebox_Runtime_Package_Executor {
 			add_filter( 'agents_api_runtime_tool_declarations', $runtime_tool_declarations, 20, 3 );
 			add_filter( 'agents_api_tool_executors', $tool_executors, 20, 2 );
 		}
+		WP_Codebox_Sandbox_Workspace_Executor::reset_mutation_ledger();
 		try {
 			$result = $ability_object->execute( $input );
 		} finally {
@@ -167,8 +168,11 @@ final class WP_Codebox_Runtime_Package_Executor {
 		$result['metadata'] = array_merge(
 			is_array( $result['metadata'] ?? null ) ? $result['metadata'] : array(),
 			array(
-				'workflow_ability' => $ability,
-				'workflow_id'      => $ability,
+				'workflow_ability'            => $ability,
+				'workflow_id'                 => $ability,
+				// Content-free write-attempt ledger so hosts can tell a lost
+				// sandbox write from a rejected or never-attempted one.
+				'sandbox_workspace_mutations' => WP_Codebox_Sandbox_Workspace_Executor::mutation_ledger(),
 			)
 		);
 

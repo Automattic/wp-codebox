@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { createHash } from "node:crypto"
-import { applyRunnerWorkspacePatch, runnerWorkspaceIdentity, verifyRunnerWorkspaceIntegrity } from "../packages/runtime-core/src/runner-workspace-apply.js"
+import { applyRunnerWorkspacePatch, runnerWorkspaceIdentity, verifyRunnerWorkspaceIntegrity, writablePathMatches } from "../packages/runtime-core/src/runner-workspace-apply.js"
 
 const exec = promisify(execFile)
 
@@ -189,6 +189,69 @@ const files = [{ path: "/workspace/README.md", relativePath: "README.md", status
   await rm(patchPath)
   await symlink(target, patchPath)
   await assert.rejects(() => applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"] }), /bounded regular file/)
+}
+
+{
+  // Nested writable globs (issue #2567): a new file under a nested docs tree is
+  // applied, and the result reports exactly what reached the workspace.
+  const nestedPatch = "--- /dev/null\n+++ b/plugins/extrachill-shop/docs/user/getting-started.md\n@@ -0,0 +1 @@\n+nested\n"
+  const nestedFiles = [{ path: "/workspace/plugins/extrachill-shop/docs/user/getting-started.md", relativePath: "plugins/extrachill-shop/docs/user/getting-started.md", status: "added", afterMode: "100644" }]
+  for (const writablePaths of [["plugins/extrachill-shop/docs/user/**"], ["./plugins/extrachill-shop/docs/user/"], ["plugins/*/docs/user/**"], ["plugins/**/*.md"]]) {
+    const input = await fixture(nestedPatch, nestedFiles)
+    const result = await applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths })
+    assert.equal(result.status, "applied", `nested path applies for ${writablePaths.join(",")}`)
+    assert.deepEqual(result.changedFiles, ["plugins/extrachill-shop/docs/user/getting-started.md"])
+    assert.equal(result.declaredChanges, 1)
+    assert.equal(await readFile(join(input.workspace, "plugins/extrachill-shop/docs/user/getting-started.md"), "utf8"), "nested\n")
+  }
+}
+
+{
+  // Every rejected path is reported with its reason instead of only the first.
+  const twoPatch = "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-before\n+after\n--- /dev/null\n+++ b/docs/other.md\n@@ -0,0 +1 @@\n+x\n"
+  const twoFiles = [...files, { path: "/workspace/docs/other.md", relativePath: "docs/other.md", status: "added", afterMode: "100644" }]
+  const input = await fixture(twoPatch, twoFiles)
+  await assert.rejects(
+    () => applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["plugins/x/docs/user/**"] }),
+    (error: Error & { rejectedPaths?: unknown }) => {
+      assert.match(error.message, /outside writable_paths: README\.md \(2 paths rejected\)/)
+      assert.deepEqual(error.rejectedPaths, [{ path: "README.md", reason: "outside-writable-paths" }, { path: "docs/other.md", reason: "outside-writable-paths" }])
+      return true
+    },
+  )
+  assert.equal(await readFile(join(input.workspace, "README.md"), "utf8"), "before\n", "rejection happens before any change is applied")
+}
+
+{
+  const input = await fixture("", [])
+  const result = await applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"] })
+  assert.equal(result.status, "no-op")
+  assert.equal(result.declaredChanges, 0)
+}
+
+// Host writable-path matching mirrors the sandbox workspace tools.
+for (const [path, pattern, expected] of [
+  ["plugins/extrachill-shop/docs/user/a.md", "plugins/extrachill-shop/docs/user/**", true],
+  ["plugins/extrachill-shop/docs/user/x/a.md", "plugins/extrachill-shop/docs/user/**", true],
+  ["plugins/extrachill-shop/docs/user", "plugins/extrachill-shop/docs/user/**", true],
+  ["plugins/extrachill-shop/docs/a.md", "plugins/extrachill-shop/docs/user/**", false],
+  ["plugins/extrachill-shop/docs/userx/a.md", "plugins/extrachill-shop/docs/user/**", false],
+  ["docs/user/a.md", "./docs/user/**", true],
+  ["docs/user/a.md", "/docs/user/", true],
+  ["docs/a.md", "docs/**/*.md", true],
+  ["docs/x/y/a.md", "docs/**/*.md", true],
+  ["docs/x/y/a.txt", "docs/**/*.md", false],
+  ["plugins/foo/docs/user/a.md", "plugins/*/docs/user/**", true],
+  ["plugins/foo/bar/docs/user/a.md", "plugins/*/docs/user/**", false],
+  ["docs/user/a.md", "docs/user/*.md", true],
+  ["docs/user/x/a.md", "docs/user/*.md", false],
+  ["docs/a.md", "docs/[!b]*.md", true],
+  ["docs/b.md", "docs/[!b]*.md", false],
+  ["README.md", "README.md", true],
+  ["README.md.bak", "README.md", false],
+  ["anything.md", ".", false],
+] as const) {
+  assert.equal(writablePathMatches(path, pattern), expected, `${path} vs ${pattern}`)
 }
 
 console.log("runner workspace apply ok")
