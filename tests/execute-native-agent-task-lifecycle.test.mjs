@@ -104,6 +104,11 @@ async function run(mode = "success") {
   const maxTurnsObserved = mode === "max-turns-maintenance"
   const mismatch = mode === "mismatch"
   const applyReject = mode === "apply-reject"
+  // runtime-failed: a schema-valid native result that reports failure with a diagnostic.
+  // result-missing: the CLI exits non-zero without writing a native result (the
+  // runs 43729752419/43729756527 shape) but the runtime transcript exists.
+  const runtimeFailed = mode === "runtime-failed"
+  const resultMissing = mode === "result-missing"
   await writeFile(fakeCli, `
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
@@ -153,6 +158,24 @@ const result = {
   },
   metadata: { imported_agent: { slug: "fixture-agent" }, tool_contract: { tools: ["workspace_read", "workspace_edit"] }, ...(${maxTurnsObserved} ? { agents_api: { tool_observability: { version: 1, calls: [{ sequence: 1, turn: 1, tool_call_id: "call-1", tool_name: "workspace_read", status: "succeeded", arguments: { keys: ["path"], count: 1, redacted: true } }] } } } : {}) },
   agent_runtime_diagnostics: { prepared_paths: { workspaces: input.task_input.workspaces.map((workspace) => ({ target: workspace.target, mode: workspace.mode, metadata: { baselineSource: "fixture-baseline", workspaceRoot: "/workspace", sourceMode: workspace.sourceMode } })) }, sandbox_workspace: { mounts: input.task_input.workspaces.map((workspace) => ({ target: workspace.target })) }, local_executor_root: "/workspace" },
+}
+const transcriptRoot = join(process.cwd(), ".codebox", "agent-task-artifacts", "runtime-fixture", "files")
+await mkdir(transcriptRoot, { recursive: true })
+await writeFile(join(transcriptRoot, "transcript.json"), JSON.stringify({
+  schema: "wp-codebox/agent-transcript/v1",
+  executions: [{ executionIndex: 0, command: "wordpress.run-php", exitCode: 0, parsed: { output: JSON.stringify({ metadata: { agents_api: { tool_observability: { version: 1, calls: Array.from({ length: 70 }, (_, index) => ({ sequence: index + 1, turn: Math.floor(index / 2) + 1, tool_call_id: "call-" + (index + 1), tool_name: index === 69 ? "workspace_write" : "workspace_read", status: "succeeded", arguments: { keys: ["path"], count: 1, redacted: true } })) } } } }) } }],
+}))
+if (${resultMissing}) {
+  process.stderr.write("fatal: agent runtime crashed\\n")
+  process.exit(1)
+}
+if (${runtimeFailed}) {
+  result.success = false
+  result.status = "failed"
+  summary.success = false
+  summary.status = "failed"
+  summary.diagnostics = [{ code: "provider_rate_limited", message: "The model provider rejected the request: rate limited.", severity: "error" }]
+  delete summary.refs
 }
 await writeFile(output, JSON.stringify(result))
 `)
@@ -419,6 +442,40 @@ for (const mode of ["max-turns", "max-turns-maintenance"]) {
   assert.equal(uploaded.terminal_status, "max_turns", "the uploaded result reports the turn cap")
   assert.equal(uploaded.agent_turn_limit.status, "max_turns")
   assert.equal(uploaded.failure.code, "max_turns_exceeded")
+}
+
+for (const mode of ["runtime-failed", "result-missing"]) {
+  const failed = await run(mode)
+  assert.equal(failed.code, 1, `${mode} must fail`)
+  assert.equal(failed.result.success, false)
+  assert.equal(failed.result.failure.stage, "agent", `${mode} names the agent stage: ${JSON.stringify(failed.result.failure)}`)
+  assert.ok(failed.result.failure.message, `${mode} carries a failure message`)
+  assert.equal(failed.result.verification.length, 0, "verification does not run after a failed agent runtime")
+  assert.equal(failed.result.workspace_apply.status, "skipped")
+  assert(!failed.order.includes("publish"))
+  if (mode === "runtime-failed") {
+    assert.equal(failed.result.failure.code, "provider_rate_limited")
+    assert.match(failed.result.failure.message, /rate limited/)
+  } else {
+    assert.equal(failed.result.failure.code, "wp-codebox.agent-task.result-missing")
+    assert.equal(failed.result.failure.exit_code, 1)
+    assert.match(failed.result.failure.stderr_tail, /agent runtime crashed/)
+  }
+  assert.equal(failed.result.reviewer_evidence?.transcript?.path, "runtime-fixture/files/transcript.json", "the runtime transcript is discovered even without a native result ref")
+  await execFileAsync(process.execPath, [uploader], {
+    cwd: failed.workspace,
+    env: {
+      ...process.env,
+      AGENT_TASK_WORKSPACE: failed.workspace,
+      AGENT_TASK_REQUEST_PATH: join(failed.workspace, ".codebox", "agent-task-request.json"),
+      AGENT_TASK_UPLOAD_PATH: join(failed.workspace, ".codebox", "agent-task-upload"),
+    },
+  })
+  const uploaded = JSON.parse(await readFile(join(failed.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-workflow-result.json"), "utf8"))
+  assert.equal(uploaded.failure.stage, "agent", "the uploaded result carries the runtime failure reason")
+  assert.equal(uploaded.failure.code, failed.result.failure.code)
+  const transcript = JSON.parse(await readFile(join(failed.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "transcript.json"), "utf8"))
+  assert.equal(transcript.executions[0].parsed.tool_observability.calls.length, 70, "tool observability survives runs with more than 64 calls")
 }
 
 console.log("native agent task lifecycle ok")
