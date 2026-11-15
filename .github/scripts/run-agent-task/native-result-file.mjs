@@ -1,7 +1,9 @@
 import { lstat, readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
-export const MAX_NATIVE_RESULT_BYTES = 1024 * 1024
+// The native result embeds the full recipe run (including the agent loop output),
+// which grows with every turn; a 1 MiB bound silently discarded long runs.
+export const MAX_NATIVE_RESULT_BYTES = 32 * 1024 * 1024
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "no_op", "timeout", "provider_error", "unable_to_remediate"])
 
 export function nativeResultFailure(code, message) {
@@ -20,7 +22,7 @@ export async function readNativeResult(path, controlledDirectory, secretValues, 
       return nativeResultFailure("wp-codebox.agent-task.result-file", "Native agent-task result file must be a regular non-symlink file.")
     }
     if (info.size > MAX_NATIVE_RESULT_BYTES) {
-      return nativeResultFailure("wp-codebox.agent-task.result-too-large", `Native agent-task result exceeds the ${MAX_NATIVE_RESULT_BYTES}-byte limit.`)
+      return nativeResultFailure("wp-codebox.agent-task.result-too-large", `Native agent-task result is ${info.size} bytes, exceeding the ${MAX_NATIVE_RESULT_BYTES}-byte limit.`)
     }
     const contents = await readFile(resolvedPath, "utf8")
     if (Buffer.byteLength(contents) !== info.size) {

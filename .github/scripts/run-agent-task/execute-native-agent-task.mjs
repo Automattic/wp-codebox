@@ -12,6 +12,7 @@ import { publishRunnerWorkspace } from "./runner-workspace-publisher.mjs"
 import { createRunnerWorkspaceSeedSnapshot, RUNNER_WORKSPACE_SEED_EXCLUDES } from "./runner-workspace-seed-snapshot.mjs"
 import { runnerWorkspaceApplyOutcome, sandboxWorkspaceMutations } from "./runner-workspace-apply-outcome.mjs"
 import { agentTurnLimitFailure, agentTurnLimitOutcome } from "./agent-turn-limit-outcome.mjs"
+import { agentRuntimeFailure } from "./agent-runtime-failure.mjs"
 import { createTrustedArtifactApplyChannel, trustedArtifactApplyRefs } from "./trusted-artifact-snapshot.mjs"
 import { artifactSourcePathCategory, assertNoSeedSnapshotPaths, containsRuntimeSourceContent, sanitizeSeedSnapshotJson } from "./artifact-upload-policy.mjs"
 import { publishProcessMarker } from "../../../scripts/process-marker.mjs"
@@ -24,6 +25,9 @@ const outputPath = process.env.GITHUB_OUTPUT
 const MAX_CAPTURE_BYTES = 32768
 const MAX_WORKFLOW_OUTPUT_BYTES = 8192
 const MAX_COMMAND_ARTIFACT_BYTES = 4 * 1024 * 1024
+// Long agent runs (40+ turns, parallel tool calls) routinely exceed 64 calls;
+// dropping the whole projection hid every write from the apply outcome.
+const MAX_TOOL_OBSERVABILITY_CALLS = 512
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
 let privateRuntimeSourceRoot = ""
 let privateRuntimeSourceRootForSanitization = ""
@@ -199,7 +203,7 @@ function record(value) {
 
 function canonicalToolObservability(metadata) {
   const source = record(record(record(metadata).agents_api).tool_observability)
-  if (source.version !== 1 || !Array.isArray(source.calls) || source.calls.length > 64) return undefined
+  if (source.version !== 1 || !Array.isArray(source.calls) || source.calls.length > MAX_TOOL_OBSERVABILITY_CALLS) return undefined
   const calls = source.calls.map(projectCanonicalToolCall).filter(Boolean)
   return calls.length ? { version: 1, calls } : undefined
 }
@@ -605,12 +609,37 @@ async function appliedWorkspaceEvidence(refs, artifactsPath) {
   return Object.keys(evidence).length === 2 ? evidence : undefined
 }
 
+// When the native result is unreadable (or carries no transcript ref) the
+// runtime may still have written its canonical transcript. Discover exactly
+// one runtime-*/files/transcript.json so failed runs keep reviewer evidence.
+async function discoveredTranscriptRefs(artifactsPath) {
+  const { readdir } = await import("node:fs/promises")
+  const entries = await readdir(artifactsPath, { withFileTypes: true }).catch(() => [])
+  const refs = []
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !/^runtime-[A-Za-z0-9._-]+$/.test(entry.name)) continue
+    const candidate = join(artifactsPath, entry.name, "files", "transcript.json")
+    const metadata = await lstat(candidate).catch(() => undefined)
+    if (metadata?.isFile()) refs.push({ kind: "codebox-transcript", path: `${entry.name}/files/transcript.json` })
+  }
+  return refs.length === 1 ? refs : []
+}
+
 async function canonicalReviewerTranscript(nativeRuntimeResult, artifactsPath) {
   const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
-  const refs = publicCore.normalizePublicArtifactRefDTOs(nativeRuntimeResult)
+  let refs = publicCore.normalizePublicArtifactRefDTOs(nativeRuntimeResult)
     .filter((ref) => ref.kind === "codebox-transcript" && typeof ref.path === "string" && ref.path)
-  if (refs.length === 0) return undefined
+  if (refs.length === 0) {
+    const discovered = await discoveredTranscriptRefs(artifactsPath)
+    if (discovered.length === 0) return undefined
+    // Best effort: a discovered transcript that fails validation is skipped
+    // rather than masking the runtime failure it is meant to explain.
+    return trustedReviewerTranscript(discovered, artifactsPath).catch(() => undefined)
+  }
+  return trustedReviewerTranscript(refs, artifactsPath)
+}
 
+async function trustedReviewerTranscript(refs, artifactsPath) {
   const root = await realpath(artifactsPath)
   const artifactRoot = resolve(artifactsPath)
   const transcripts = new Map()
@@ -822,6 +851,12 @@ const agentTurnLimit = request.run_agent && !request.dry_run
   : undefined
 const agentTurnCapReached = agentTurnLimit?.status === "max_turns"
 if (agentTurnCapReached) downstreamFailure = agentTurnLimitFailure(agentTurnLimit)
+// Any other runtime failure (non-zero exit, unreadable native result, provider
+// error, failed terminal status) must name its cause; the raw runtime result is
+// not part of the uploaded reviewer projection.
+if (request.run_agent && !request.dry_run && !downstreamFailure) {
+  downstreamFailure = agentRuntimeFailure({ execution, runtimeResult, bound: (value) => bounded(value, MAX_WORKFLOW_OUTPUT_BYTES) })
+}
 if (execution.code === 0 && runtimeResult.success === true && request.runner_workspace?.enabled && !agentTurnCapReached) {
   try {
     runnerWorkspaceCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/runner-workspace-apply.js")).href)

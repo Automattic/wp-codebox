@@ -8,6 +8,10 @@ import { artifactSourcePathCategory, assertNoSeedSnapshotPaths, containsRuntimeS
 
 const MAX_UPLOAD_FILE_BYTES = 4 * 1024 * 1024
 const MAX_TRANSCRIPT_EXECUTIONS = 64
+// The canonical transcript source is only read to build a bounded projection;
+// long agent runs legitimately exceed the 4 MiB per-file upload bound.
+const MAX_TRANSCRIPT_SOURCE_BYTES = 32 * 1024 * 1024
+const MAX_TOOL_OBSERVABILITY_CALLS = 512
 const MAX_REVIEW_TEXT_BYTES = 32 * 1024
 const MAX_TOOL_ARGUMENT_KEYS = 32
 const MAX_REVIEW_COLLECTION_ENTRIES = 64
@@ -125,7 +129,7 @@ function canonicalTranscript(result) {
     || !/^[a-f0-9]{64}$/.test(transcript.source_sha256)
     || !Number.isSafeInteger(transcript.size_bytes)
     || transcript.size_bytes < 0
-    || transcript.size_bytes > MAX_UPLOAD_FILE_BYTES) {
+    || transcript.size_bytes > MAX_TRANSCRIPT_SOURCE_BYTES) {
     throw new Error("Reviewer evidence transcript descriptor is malformed.")
   }
   return transcript
@@ -244,7 +248,7 @@ function projectToolCall(value) {
 // The canonical `wordpress.run-php` execution carries the agent runtime result
 // as a JSON-encoded string in `parsed.output`; decode it so tool calls survive.
 function decodedParsedOutput(parsed) {
-  if (typeof parsed.output !== "string" || Buffer.byteLength(parsed.output) > MAX_UPLOAD_FILE_BYTES) return record(parsed.output)
+  if (typeof parsed.output !== "string" || Buffer.byteLength(parsed.output) > MAX_TRANSCRIPT_SOURCE_BYTES) return record(parsed.output)
   try {
     return record(JSON.parse(parsed.output))
   } catch {
@@ -257,7 +261,7 @@ function decodedParsedOutput(parsed) {
 function projectWorkspaceMutations(value) {
   const ledger = record(value)
   if (ledger.schema !== "wp-codebox/sandbox-workspace-mutations/v1" || !Array.isArray(ledger.calls)) return undefined
-  const calls = ledger.calls.slice(0, MAX_TRANSCRIPT_EXECUTIONS).flatMap((value) => {
+  const calls = ledger.calls.slice(0, MAX_TOOL_OBSERVABILITY_CALLS).flatMap((value) => {
     const call = record(value)
     if (!["workspace_write", "workspace_edit", "workspace_apply_patch"].includes(call.tool) || !["succeeded", "failed"].includes(call.status)) return []
     const paths = (Array.isArray(call.paths) ? call.paths : []).map(safeTargetPath).filter(Boolean).slice(0, 32)
@@ -295,7 +299,7 @@ function projectParsed(value) {
 // and provider-specific tool records are not inputs to reviewer artifacts.
 function canonicalToolObservability(metadata) {
   const source = record(record(record(metadata).agents_api).tool_observability)
-  if (source.version !== 1 || !Array.isArray(source.calls) || source.calls.length > MAX_TRANSCRIPT_EXECUTIONS) return undefined
+  if (source.version !== 1 || !Array.isArray(source.calls) || source.calls.length > MAX_TOOL_OBSERVABILITY_CALLS) return undefined
   const calls = source.calls.map(projectCanonicalToolCall).filter(Boolean)
   return calls.length ? { version: 1, calls } : undefined
 }
@@ -354,7 +358,7 @@ async function trustedTranscriptFile(path) {
     if (stat.isSymbolicLink()) throw new Error("Canonical transcript must not traverse symlinks.")
   }
   const stat = await lstat(current)
-  if (!stat.isFile() || stat.size > MAX_UPLOAD_FILE_BYTES) throw new Error("Canonical transcript must be a bounded regular file.")
+  if (!stat.isFile() || stat.size > MAX_TRANSCRIPT_SOURCE_BYTES) throw new Error("Canonical transcript must be a bounded regular file.")
   const resolved = await realpath(current)
   const contained = relative(root, resolved)
   if (contained === ".." || contained.startsWith(`..${String.fromCharCode(47)}`) || isAbsolute(contained)) throw new Error("Canonical transcript escapes the trusted artifact root.")

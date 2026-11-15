@@ -1,7 +1,9 @@
 import { isPlainObject, objectValue, stripUndefined } from "./object-utils.js"
 
 export const TOOL_OBSERVABILITY_VERSION = 1 as const
-const MAX_TOOL_CALLS = 64
+// Long agent runs (40+ turns with parallel tool calls) exceed 64 calls; the
+// projection is content-free, so a larger bound stays cheap.
+const MAX_TOOL_CALLS = 512
 const MAX_IDENTIFIER_LENGTH = 256
 const MAX_ARGUMENT_KEYS = 32
 const RESULT_TYPES = ["array", "object", "string", "integer", "double", "boolean", "null"] as const
