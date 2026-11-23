@@ -841,11 +841,11 @@ export async function resolvePlaygroundWordPressStartupAsset(versionQuery: strin
       }
     }
 
-    await downloadWordPressArchiveToCache(release.releaseUrl, cachedArchivePath)
-    const downloadedValidation = await validateWordPressArchivePaths(release.version, release.releaseUrl, [cachedArchivePath], { deleteInvalid: false })
+    const downloadedFrom = await downloadWordPressArchiveToCache(wordPressArchiveDownloadUrls(release.version, release.releaseUrl), cachedArchivePath)
+    const downloadedValidation = await validateWordPressArchivePaths(release.version, downloadedFrom, [cachedArchivePath], { deleteInvalid: false })
     const invalidDownloadedArchive = downloadedValidation.invalidArchives[0]
     if (invalidDownloadedArchive) {
-      throw new PlaygroundStartupAssetError("wordpress-archive-cache", release.releaseUrl, versionQuery ?? "latest", new Error(`Downloaded WordPress archive is invalid: ${invalidDownloadedArchive.reason}`))
+      throw new PlaygroundStartupAssetError("wordpress-archive-cache", downloadedFrom, versionQuery ?? "latest", new Error(`Downloaded WordPress archive is invalid: ${invalidDownloadedArchive.reason}`))
     }
 
     const archiveReference = isCustomPlaygroundWordPressArchive(cachedArchivePath) ? await acquirePlaygroundArchiveReference(cachedArchivePath) : undefined
@@ -863,7 +863,38 @@ export async function resolvePlaygroundWordPressStartupAsset(versionQuery: strin
   }, (lockPath) => new PlaygroundStartupAssetError("wordpress-archive-cache-lock", lockPath, release.version, new Error("Timed out waiting for WordPress archive cache lock")))
 }
 
-async function downloadWordPressArchiveToCache(sourceUrl: string, archivePath: string): Promise<void> {
+/**
+ * Ordered download candidates for a WordPress release archive: the URL the
+ * release API (or inference) returned first, then the equivalent official
+ * mirrors. The release API currently answers with a `downloads.w.org` URL,
+ * which is unreachable from some networks that can still reach
+ * `downloads.wordpress.org` and `wordpress.org`; without mirrors a single
+ * unreachable host made every cache miss fatal.
+ */
+export function wordPressArchiveDownloadUrls(version: string, releaseUrl: string): string[] {
+  const urls = [releaseUrl]
+  if (/^\d+\.\d+(?:\.\d+)?(?:-(?:alpha|beta|RC)\d*)?$/i.test(version)) {
+    urls.push(`https://downloads.wordpress.org/release/wordpress-${version}.zip`, `https://wordpress.org/wordpress-${version}.zip`)
+  }
+  return [...new Set(urls)]
+}
+
+/** Downloads the first candidate that yields a valid archive and returns its URL. */
+async function downloadWordPressArchiveToCache(sourceUrls: string[], archivePath: string): Promise<string> {
+  const failures: string[] = []
+  for (const sourceUrl of sourceUrls) {
+    try {
+      await downloadWordPressArchiveFrom(sourceUrl, archivePath)
+      return sourceUrl
+    } catch (error) {
+      failures.push(`${sourceUrl}: ${fetchErrorMessage(error)}`)
+    }
+  }
+  const summary = failures.length === 1 ? failures[0].slice(sourceUrls[0].length + 2) : `all ${failures.length} download sources failed (${failures.join("; ")})`
+  throw new PlaygroundStartupAssetError("wordpress-archive-cache", sourceUrls[0], basename(archivePath, ".zip"), new Error(summary))
+}
+
+async function downloadWordPressArchiveFrom(sourceUrl: string, archivePath: string): Promise<void> {
   const tempPath = `${archivePath}.${process.pid}.${Date.now()}.partial`
   try {
     const response = await fetch(sourceUrl)
@@ -879,8 +910,21 @@ async function downloadWordPressArchiveToCache(sourceUrl: string, archivePath: s
     await rename(tempPath, archivePath)
   } catch (error) {
     await rm(tempPath, { force: true })
-    throw new PlaygroundStartupAssetError("wordpress-archive-cache", sourceUrl, basename(archivePath, ".zip"), error)
+    throw error
   }
+}
+
+/** undici reports network failures as a bare "fetch failed"; surface the underlying cause (e.g. EHOSTUNREACH). */
+function fetchErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  const cause = error instanceof Error ? error.cause : undefined
+  if (!cause || typeof cause !== "object") {
+    return message
+  }
+  const code = "code" in cause && typeof cause.code === "string" ? cause.code : undefined
+  const causeMessage = "message" in cause && typeof cause.message === "string" ? cause.message : undefined
+  const detail = code && causeMessage && !causeMessage.includes(code) ? `${code}: ${causeMessage}` : causeMessage ?? code
+  return detail ? `${message} (${detail})` : message
 }
 
 export async function resolveWordPressReleaseForStartup(versionQuery: string | undefined, cacheDirectory = playgroundWordPressArchiveCacheDirectory(), resolver: WordPressReleaseResolver = resolveWordPressRelease): Promise<ResolvedWordPressReleaseForStartup> {

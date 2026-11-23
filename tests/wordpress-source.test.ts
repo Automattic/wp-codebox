@@ -7,6 +7,7 @@ import { collectBytes, encodeZip } from "@php-wasm/stream-compression"
 
 import { runWordPressSourceCommand } from "../packages/cli/src/commands/wordpress-source.js"
 import { materializePlaygroundWordPressSource, verifiedWordPressRootError, WORDPRESS_SOURCE_SCHEMA } from "../packages/runtime-playground/src/playground-wordpress-source.js"
+import { wordPressArchiveDownloadUrls } from "../packages/runtime-playground/src/playground-cli-runner.js"
 
 const TAG_PROCESSOR = "wp-includes/html-api/class-wp-html-tag-processor.php"
 
@@ -138,6 +139,63 @@ try {
   assert.equal(existsSync(join(cacheDirectory, "9.9.10.zip")), false)
   assert.equal(existsSync(join(cacheDirectory, "source", "9.9.10")), false)
 
+  // Mirror fallback: an unreachable release host falls through to the official
+  // mirrors instead of failing the cache miss. (The release API answers
+  // "latest" with a downloads.w.org URL, which some networks cannot reach.)
+  assert.deepEqual(wordPressArchiveDownloadUrls("9.9.12", "https://downloads.w.org/release/wordpress-9.9.12.zip"), [
+    "https://downloads.w.org/release/wordpress-9.9.12.zip",
+    "https://downloads.wordpress.org/release/wordpress-9.9.12.zip",
+    "https://wordpress.org/wordpress-9.9.12.zip",
+  ])
+  assert.deepEqual(wordPressArchiveDownloadUrls("9.9.12-RC1", "https://wordpress.org/wordpress-9.9.12-RC1.zip"), [
+    "https://wordpress.org/wordpress-9.9.12-RC1.zip",
+    "https://downloads.wordpress.org/release/wordpress-9.9.12-RC1.zip",
+  ])
+  assert.deepEqual(wordPressArchiveDownloadUrls("custom-1234abcd", "https://example.test/custom.zip"), ["https://example.test/custom.zip"])
+
+  const mirrorArchive = await wordpressZip("9.9.12")
+  const mirrorRequests: string[] = []
+  const unreachable = () => new TypeError("fetch failed", { cause: Object.assign(new Error("connect EHOSTUNREACH 192.0.2.1:443"), { code: "EHOSTUNREACH" }) })
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input)
+    mirrorRequests.push(url)
+    if (url.startsWith("https://wordpress.org/")) {
+      throw unreachable()
+    }
+    return new Response(mirrorArchive, { status: 200 })
+  }) as typeof fetch
+  const mirrored = await materializePlaygroundWordPressSource("9.9.12", { cacheDirectory })
+  assert.deepEqual(mirrorRequests, [
+    "https://wordpress.org/wordpress-9.9.12.zip",
+    "https://downloads.wordpress.org/release/wordpress-9.9.12.zip",
+  ])
+  assert.equal(mirrored.version, "9.9.12")
+  assert.equal(mirrored.sourceUrl, "https://downloads.wordpress.org/release/wordpress-9.9.12.zip")
+  assert.equal(mirrored.archive, join(cacheDirectory, "9.9.12.zip"))
+  assert.equal(await verifiedWordPressRootError(mirrored.root, "9.9.12"), undefined)
+
+  // Every source unreachable: one error naming each URL and the network cause.
+  globalThis.fetch = (async () => { throw unreachable() }) as typeof fetch
+  await assert.rejects(() => materializePlaygroundWordPressSource("9.9.13", { cacheDirectory }), (error: Error) => {
+    assert.match(error.message, /all 2 download sources failed/)
+    assert.match(error.message, /https:\/\/wordpress\.org\/wordpress-9\.9\.13\.zip: fetch failed \(connect EHOSTUNREACH/)
+    assert.match(error.message, /https:\/\/downloads\.wordpress\.org\/release\/wordpress-9\.9\.13\.zip: fetch failed/)
+    return true
+  })
+  assert.equal(existsSync(join(cacheDirectory, "9.9.13.zip")), false)
+
+  // CLI --json failure: a structured error object on stdout with a stable code.
+  const offlineJson = await captureStdout(() => runWordPressSourceCommand(["--wp", "9.9.13", "--json"], (versionQuery, options) => materializePlaygroundWordPressSource(versionQuery, { ...options, cacheDirectory })))
+  assert.equal(offlineJson.code, 1)
+  const offlineError = JSON.parse(offlineJson.stdout)
+  assert.equal(offlineError.schema, WORDPRESS_SOURCE_SCHEMA)
+  assert.equal(offlineError.root, undefined)
+  assert.equal(offlineError.error.code, "wordpress-source-download-failed")
+  assert.equal(offlineError.error.requestedVersion, "9.9.13")
+  assert.equal(offlineError.error.sourceUrl, "https://wordpress.org/wordpress-9.9.13.zip")
+  assert.match(offlineError.error.message, /EHOSTUNREACH/)
+  assert.match(offlineJson.stderr, /failed to materialize WordPress 9\.9\.13 source/)
+
   // Invalid archive bytes are rejected by the existing validator.
   globalThis.fetch = (async () => new Response("not a zip", { status: 200 })) as typeof fetch
   await assert.rejects(() => materializePlaygroundWordPressSource("9.9.11", { cacheDirectory }), /invalid/)
@@ -162,8 +220,17 @@ try {
 
   const failed = await captureStdout(() => runWordPressSourceCommand(["--wp", "9.9.2", "--json"], materialize))
   assert.equal(failed.code, 1)
-  assert.equal(failed.stdout, "")
+  assert.equal(failed.stdout.trim().split("\n").length, 1, "a --json failure prints exactly one JSON line")
+  assert.equal(JSON.parse(failed.stdout).error.code, "wordpress-source-materialization-failed")
   assert.match(failed.stderr, /failed to materialize WordPress 9\.9\.2 source/)
+
+  const failedPlain = await captureStdout(() => runWordPressSourceCommand(["--wp", "9.9.2"], materialize))
+  assert.equal(failedPlain.code, 1)
+  assert.equal(failedPlain.stdout, "", "without --json, failures stay on stderr")
+
+  const trunkJson = await captureStdout(() => runWordPressSourceCommand(["--wp", "trunk", "--json"], materialize))
+  assert.equal(trunkJson.code, 1)
+  assert.equal(JSON.parse(trunkJson.stdout).error.code, "wordpress-source-invalid-version")
 
   const usage = await captureStdout(() => runWordPressSourceCommand(["--bogus"], materialize))
   assert.equal(usage.code, 2)
@@ -172,6 +239,7 @@ try {
 
   const missingValue = await captureStdout(() => runWordPressSourceCommand(["--wp", "--json"], materialize))
   assert.equal(missingValue.code, 2)
+  assert.equal(JSON.parse(missingValue.stdout).error.code, "wordpress-source-invalid-arguments")
   assert.match(missingValue.stderr, /--wp requires a version query/)
 
   console.log("wordpress-source passed")
