@@ -288,7 +288,7 @@ function accessFailure(request) {
   const caller = string(access.caller_repo)
   if (!allowed.includes(target) || !tokenRepos.includes(target)) return "Target repository is not explicitly authorized by allowed_repos and access_token_repos."
   if (!caller) return "Caller repository is required for publication authorization."
-  if (target !== caller && process.env.EXPLICIT_ACCESS_TOKEN_CONFIGURED !== "true") return "An explicit ACCESS_TOKEN is required for cross-repository publication."
+  if (target !== caller && process.env.EXPLICIT_ACCESS_TOKEN_CONFIGURED !== "true") return "An explicit ACCESS_TOKEN or minted GitHub App token is required for cross-repository publication."
   if (!string(process.env.ACCESS_TOKEN || process.env.GITHUB_TOKEN)) return "No effective GitHub token is available for runner workspace tools."
   return ""
 }
