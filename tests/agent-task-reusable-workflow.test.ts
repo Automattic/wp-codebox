@@ -29,9 +29,49 @@ assert.match(workflow, /access_token_repos:/)
 assert.doesNotMatch(publicWorkflowSurface, /require_access_token:/)
 assert.match(workflow, /projected_outputs_json:/)
 assert.match(workflow, /ACCESS_TOKEN:/)
-assert.match(workflow, /GITHUB_TOKEN: \$\{\{ secrets\.ACCESS_TOKEN \|\| github\.token \}\}/)
+assert.match(publicWorkflowSurface, /ACCESS_APP_ID:\n        description: .+\n        required: false/)
+assert.match(publicWorkflowSurface, /ACCESS_APP_PRIVATE_KEY:\n        description: .+\n        required: false/)
+assert.match(workflow, /RESOLVED_TOKEN: \$\{\{ secrets\.ACCESS_TOKEN \|\| steps\.access-app-token\.outputs\.token \|\| github\.token \}\}/)
+assert.equal(workflow.match(/GITHUB_TOKEN: \$\{\{ steps\.access-token\.outputs\.token \}\}/g)?.length, 2)
+assert.match(workflow, /token: \$\{\{ steps\.access-token\.outputs\.token \}\}/)
+assert.doesNotMatch(workflow, /secrets\.ACCESS_TOKEN \|\| github\.token/)
+assert.match(workflow, /EXPLICIT_TOKEN: \$\{\{ secrets\.ACCESS_TOKEN != '' \|\| steps\.access-app-token\.outputs\.token != '' \}\}/)
+assert.match(workflow, /if: steps\.access-app-config\.outputs\.mint == 'true'\n        uses: actions\/create-github-app-token@[a-f0-9]{40} # v2\.2\.1/)
+assert.match(workflow, /app-id: \$\{\{ secrets\.ACCESS_APP_ID \}\}/)
+assert.match(workflow, /private-key: \$\{\{ secrets\.ACCESS_APP_PRIVATE_KEY \}\}/)
+assert.match(workflow, /owner: \$\{\{ steps\.access-app-config\.outputs\.owner \}\}/)
+assert.match(workflow, /repositories: \$\{\{ steps\.access-app-config\.outputs\.repositories \}\}/)
+assert.ok(workflow.indexOf('name: Mint GitHub App installation token') < workflow.indexOf('name: Checkout target workspace'))
+
+// Exercise the actual inline configuration code without GitHub or app credentials.
+const appConfigScript = workflow.match(/node --input-type=module <<'NODE'\n([\s\S]*?)          NODE/)?.[1].replace(/^          /gm, '')
+assert.ok(appConfigScript)
+const appConfigTmp = await mkdtemp(join(tmpdir(), 'wp-codebox-app-config-'))
+try {
+  for (const [id, key, token, mint] of [
+    ['', '', '', false], ['123', 'private-key', '', true],
+    ['123', 'private-key', 'explicit-token', false], ['', '', 'explicit-token', false],
+  ] as const) {
+    const output = join(appConfigTmp, 'output')
+    await writeFile(output, '')
+    await execFileAsync(process.execPath, ['--input-type=module', '-e', appConfigScript], { env: {
+      ...process.env, ACCESS_APP_ID: id, ACCESS_APP_PRIVATE_KEY: key, ACCESS_TOKEN: token,
+      TARGET_REPO: 'Automattic/target', ACCESS_TOKEN_REPOS: 'Automattic/extra,other/ignored,automattic/extra,Automattic/target', GITHUB_OUTPUT: output,
+    } })
+    assert.equal(await readFile(output, 'utf8'), `mint=${mint}\nowner=Automattic\nrepositories=target,extra\n`)
+  }
+  for (const [id, key] of [['123', ''], ['', 'private-key']]) {
+    for (const token of ['', 'explicit-token']) {
+      await assert.rejects(execFileAsync(process.execPath, ['--input-type=module', '-e', appConfigScript], { env: {
+        ...process.env, ACCESS_APP_ID: id, ACCESS_APP_PRIVATE_KEY: key, ACCESS_TOKEN: token,
+      } }), /::error::ACCESS_APP_ID and ACCESS_APP_PRIVATE_KEY must both be configured/)
+    }
+  }
+} finally {
+  await rm(appConfigTmp, { recursive: true, force: true })
+}
 assert.match(workflow, /CALLER_REPO: \$\{\{ github\.repository \}\}/)
-assert.match(workflow, /EXPLICIT_ACCESS_TOKEN_CONFIGURED: \$\{\{ secrets\.ACCESS_TOKEN != '' \}\}/)
+assert.match(workflow, /EXPLICIT_ACCESS_TOKEN_CONFIGURED: \$\{\{ steps\.access-token\.outputs\.explicit \}\}/)
 assert.doesNotMatch(workflow, /homeboy|require_app_token|require_homeboy_app_token|REQUIRE_HOMEBOY_APP_TOKEN|Extra-Chill\/homeboy-action|agent-task run-plan/i)
 assert.doesNotMatch(workflow, /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref/i)
 assert.doesNotMatch(workflow, /datamachine-agent-ci|runtime-agent-full-run|Extra-Chill\/homeboy-extensions/)
@@ -95,7 +135,10 @@ assert.match(docs, /external_package_source/)
 assert.match(docs, /runner_workspace/)
 assert.match(docs, /access_token_repos/)
 assert.match(docs, /built-in `github\.token` as `GITHUB_TOKEN`/)
-assert.match(docs, /target in another\nrepository, `ACCESS_TOKEN` is required explicitly/)
+assert.match(docs, /`ACCESS_APP_ID`/)
+assert.match(docs, /`ACCESS_APP_PRIVATE_KEY`/)
+assert.match(docs, /tokens last 1 hour/)
+assert.match(docs, /`ACCESS_TOKEN` or both app secrets/)
 assert.match(docs, /success_requires_pr/)
 assert.match(docs, /intentional exposed-workflow breaking change/)
 assert.match(docs, /wp-codebox\/reusable-workflow-interface\/v1/)
@@ -293,7 +336,7 @@ const crossRepositoryRequest = {
 await assert.rejects(
   executeAccessCase(crossRepositoryRequest, { GITHUB_TOKEN: callerToken, EXPLICIT_ACCESS_TOKEN_CONFIGURED: "false" }),
 )
-assert.match(JSON.parse(await readFile(resultPath, "utf8")).access.error, /explicit ACCESS_TOKEN is required for cross-repository publication/)
+assert.match(JSON.parse(await readFile(resultPath, "utf8")).access.error, /explicit ACCESS_TOKEN or minted GitHub App token is required for cross-repository publication/)
 
 const targetMismatchRequest = {
   ...request,

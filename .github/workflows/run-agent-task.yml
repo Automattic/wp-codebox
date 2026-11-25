@@ -133,7 +133,13 @@ name: Run Agent Task (reusable)
       MODEL_PROVIDER_SECRET_5:
         required: false
       ACCESS_TOKEN:
-        description: Optional explicit GitHub token for an authorized cross-repository target. Same-repository publication uses the caller token.
+        description: Optional explicit GitHub token; takes precedence over app credentials and the caller token.
+        required: false
+      ACCESS_APP_ID:
+        description: Optional GitHub App ID for publication; requires ACCESS_APP_PRIVATE_KEY.
+        required: false
+      ACCESS_APP_PRIVATE_KEY:
+        description: Optional GitHub App private key for publication; requires ACCESS_APP_ID.
         required: false
       EXTERNAL_PACKAGE_SOURCE_POLICY:
         description: Trusted versioned JSON policy authorizing external native package repositories and exact standalone .agent.json paths.
@@ -223,12 +229,63 @@ jobs:
         working-directory: .wp-codebox-workflow
         run: npm ci
 
+      - name: Prepare GitHub App token configuration
+        id: access-app-config
+        env:
+          ACCESS_APP_ID: ${{ secrets.ACCESS_APP_ID }}
+          ACCESS_APP_PRIVATE_KEY: ${{ secrets.ACCESS_APP_PRIVATE_KEY }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          ACCESS_TOKEN_REPOS: ${{ inputs.access_token_repos }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          const { ACCESS_APP_ID, ACCESS_APP_PRIVATE_KEY, ACCESS_TOKEN, TARGET_REPO, ACCESS_TOKEN_REPOS } = process.env;
+          if (Boolean(ACCESS_APP_ID) !== Boolean(ACCESS_APP_PRIVATE_KEY)) {
+            console.error('::error::ACCESS_APP_ID and ACCESS_APP_PRIVATE_KEY must both be configured, or both omitted.');
+            process.exit(1);
+          }
+          const [owner, repository, extra] = TARGET_REPO.split('/');
+          if (!owner || !repository || extra || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(TARGET_REPO)) {
+            console.error('::error::target_repo must be in OWNER/REPO format.');
+            process.exit(1);
+          }
+          const repositories = new Set([repository]);
+          for (const entry of (ACCESS_TOKEN_REPOS || '').split(',')) {
+            const [entryOwner, name, remainder] = entry.trim().split('/');
+            if (entryOwner.toLowerCase() === owner.toLowerCase() && name && !remainder && /^[A-Za-z0-9_.-]+$/.test(name)) {
+              repositories.add(name);
+            }
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `mint=${Boolean(ACCESS_APP_ID && ACCESS_APP_PRIVATE_KEY && !ACCESS_TOKEN)}\nowner=${owner}\nrepositories=${[...repositories].join(',')}\n`);
+          NODE
+
+      - name: Mint GitHub App installation token
+        id: access-app-token
+        if: steps.access-app-config.outputs.mint == 'true'
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        with:
+          app-id: ${{ secrets.ACCESS_APP_ID }}
+          private-key: ${{ secrets.ACCESS_APP_PRIVATE_KEY }}
+          owner: ${{ steps.access-app-config.outputs.owner }}
+          repositories: ${{ steps.access-app-config.outputs.repositories }}
+
+      - name: Resolve GitHub access token
+        id: access-token
+        env:
+          RESOLVED_TOKEN: ${{ secrets.ACCESS_TOKEN || steps.access-app-token.outputs.token || github.token }}
+          EXPLICIT_TOKEN: ${{ secrets.ACCESS_TOKEN != '' || steps.access-app-token.outputs.token != '' }}
+        run: |
+          echo "::add-mask::${RESOLVED_TOKEN}"
+          echo "token=${RESOLVED_TOKEN}" >> "$GITHUB_OUTPUT"
+          echo "explicit=${EXPLICIT_TOKEN}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout target workspace
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.target_repo }}
           path: workspace
-          token: ${{ secrets.ACCESS_TOKEN || github.token }}
+          token: ${{ steps.access-token.outputs.token }}
           persist-credentials: false
 
       - name: Build Codebox task request
@@ -283,8 +340,8 @@ jobs:
           MODEL_PROVIDER_SECRET_5: ${{ secrets.MODEL_PROVIDER_SECRET_5 }}
           # Runner workspace tools resolve GitHub credentials from this standard
           # environment variable. It is never written to task inputs or artifacts.
-          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN || github.token }}
-          EXPLICIT_ACCESS_TOKEN_CONFIGURED: ${{ secrets.ACCESS_TOKEN != '' }}
+          GITHUB_TOKEN: ${{ steps.access-token.outputs.token }}
+          EXPLICIT_ACCESS_TOKEN_CONFIGURED: ${{ steps.access-token.outputs.explicit }}
           EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
         run: node .wp-codebox-workflow/.github/scripts/run-agent-task/execute-native-agent-task.mjs
 
@@ -302,7 +359,7 @@ jobs:
           MODEL_PROVIDER_SECRET_3: ${{ secrets.MODEL_PROVIDER_SECRET_3 }}
           MODEL_PROVIDER_SECRET_4: ${{ secrets.MODEL_PROVIDER_SECRET_4 }}
           MODEL_PROVIDER_SECRET_5: ${{ secrets.MODEL_PROVIDER_SECRET_5 }}
-          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ steps.access-token.outputs.token }}
           EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
 
       - name: Upload Codebox task request

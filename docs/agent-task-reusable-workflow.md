@@ -75,12 +75,26 @@ This release-coherence contract fixes [#1759](https://github.com/Automattic/wp-c
 
 ## Access And Publication
 
-For a target equal to the caller repository, the workflow passes the caller's
-built-in `github.token` as `GITHUB_TOKEN` to native agent execution. An
-`ACCESS_TOKEN` secret is not required in that case. For a target in another
-repository, `ACCESS_TOKEN` is required explicitly and must be scoped by both
-`access_token_repos` and `allowed_repos`. The caller token is never inferred to
-have cross-repository access. The effective token is not serialized into task
+The workflow resolves one token for target checkout, native execution, and upload
+redaction, in this order: optional `ACCESS_TOKEN`, a minted GitHub App installation
+token, then the caller's built-in `github.token` as `GITHUB_TOKEN`. To mint inside
+this job, pass both optional secrets `ACCESS_APP_ID` (GitHub App ID) and
+`ACCESS_APP_PRIVATE_KEY` (its private key) in the reusable workflow caller's
+`secrets:` mapping. Exactly one app secret is an error, even with `ACCESS_TOKEN`.
+When `ACCESS_TOKEN` is set, it wins and no app token is minted.
+
+Install the app on the target repositories with contents and pull-request write
+permissions. The mint step scopes the token to the owner of `target_repo`, the
+target repository name, and any `access_token_repos` entries under that same owner
+(case-insensitive); entries under other owners are not requested. App installation
+tokens last 1 hour, longer than the default `time_budget_ms` of 600000 (10 minutes);
+they are not refreshed during a run. App-authored PRs can trigger `pull_request`
+workflows, unlike PRs opened with the caller token.
+
+For a target equal to the caller repository, neither explicit credential is
+required. For a target in another repository, `ACCESS_TOKEN` or both app secrets
+are required, and the target must be scoped by both `access_token_repos` and
+`allowed_repos`. The caller token is never inferred to have cross-repository access. The effective token is not serialized into task
 input, result, or artifact data. GitHub runner tools
 receive the normalized `allowed_repos` policy explicitly through the runtime and
 fail closed for every PR, issue, and comment operation outside that set. The
