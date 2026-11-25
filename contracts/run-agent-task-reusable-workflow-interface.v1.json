@@ -40,6 +40,8 @@
     "MODEL_PROVIDER_SECRET_4": { "required": false },
     "MODEL_PROVIDER_SECRET_5": { "required": false },
     "ACCESS_TOKEN": { "required": false },
+    "ACCESS_APP_ID": { "required": false },
+    "ACCESS_APP_PRIVATE_KEY": { "required": false },
     "EXTERNAL_PACKAGE_SOURCE_POLICY": { "required": true }
   },
   "outputs": {
