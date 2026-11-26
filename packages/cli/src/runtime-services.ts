@@ -25,6 +25,22 @@ export interface RuntimeServiceControlResult {
   reason?: string
 }
 
+type ExternalMysqlFailureCode = "env-unavailable" | "invalid-port" | "network-policy-denied" | "network-policy-host-not-allowed" | "boundary-missing" | "boundary-host-not-allowlisted" | "boundary-host-blocked" | "boundary-writes-not-permitted" | "writes-not-approved"
+
+interface ExternalMysqlFailureReason {
+  code: ExternalMysqlFailureCode
+  message: string
+  field?: string
+  envName?: string
+}
+
+class ExternalMysqlConfigurationError extends Error {
+  constructor(readonly reason: ExternalMysqlFailureReason) {
+    super(reason.message)
+    this.name = "ExternalMysqlConfigurationError"
+  }
+}
+
 export interface RuntimeServiceEvidence {
   id: string
   kind: string
@@ -36,6 +52,7 @@ export interface RuntimeServiceEvidence {
   diagnostic?: {
     code: "readiness-failed" | "provision-failed" | "provider-unavailable" | "teardown-failed" | "interrupted"
     command?: string
+    reason?: ExternalMysqlFailureReason
     cause?: { code: string; message: string }
   }
   controls?: RuntimeServiceControlResult[]
@@ -1379,11 +1396,13 @@ async function provisionMysqlExternalService(service: WorkspaceRecipeRuntimeServ
   try {
     connection = externalMysqlConnection(service, dependencies.environment ?? process.env)
     assertExternalMysqlAuthorization(service, connection.host, connection.port, context)
-  } catch {
+  } catch (error) {
     evidence.readiness = "failed"
     evidence.lifecycle = "failed"
-    evidence.diagnostic = { code: "provision-failed" }
-    throw new RuntimeServiceProvisionError(`Managed runtime service failed: ${service.id}`, evidenceList)
+    const reason = error instanceof ExternalMysqlConfigurationError ? error.reason : undefined
+    evidence.diagnostic = { code: "provision-failed", ...(reason ? { reason } : {}) }
+    const detail = reason ? ` (${reason.code}: ${reason.message})` : ""
+    throw new RuntimeServiceProvisionError(`Managed runtime service failed: ${service.id}${detail}`, evidenceList)
   }
   const client = engine === "mariadb" ? "mariadb" : "mysql"
   const suffix = dependencies.randomBytes(12).toString("hex")
@@ -1478,25 +1497,26 @@ function externalMysqlConnection(service: WorkspaceRecipeRuntimeService, environ
   const password = configuredEnvironmentValue(configuration?.passwordEnv, environment, "passwordEnv", true)
   const portValue = configuration?.portEnv ? configuredEnvironmentValue(configuration.portEnv, environment, "portEnv") : "3306"
   const port = Number(portValue)
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("External MySQL port environment value must be an integer between 1 and 65535")
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ExternalMysqlConfigurationError({ code: "invalid-port", message: "External MySQL port environment value must be an integer between 1 and 65535" })
   return { host, port, username, password }
 }
 
 function assertExternalMysqlAuthorization(service: WorkspaceRecipeRuntimeService, host: string, port: number, context: RuntimeServiceProvisionContext): void {
   const policy = context.policy
-  if (!policy || policy.network === "deny") throw new Error("External MySQL access is denied by runtime network policy")
+  if (!policy || policy.network === "deny") throw new ExternalMysqlConfigurationError({ code: "network-policy-denied", message: "External MySQL access is denied by runtime network policy" })
   if (typeof policy.network === "object" && !hostListAllows(policy.network.allowHosts, host, port)) {
-    throw new Error("External MySQL host is not allowed by runtime network policy")
+    throw new ExternalMysqlConfigurationError({ code: "network-policy-host-not-allowed", message: "External MySQL host is not allowed by runtime network policy" })
   }
 
   const boundaryId = service.configuration?.externalService
   const boundary = context.externalServices.find((candidate) => candidate.id === boundaryId)
-  if (!boundary || boundary.allowedHosts?.length === 0 || !hostListAllows(boundary.allowedHosts ?? [], host, port)) {
-    throw new Error("External MySQL host is not explicitly allowlisted by its external-service boundary")
+  if (!boundary) throw new ExternalMysqlConfigurationError({ code: "boundary-missing", message: "External MySQL external-service boundary is missing" })
+  if (!hostListAllows(boundary.allowedHosts ?? [], host, port)) {
+    throw new ExternalMysqlConfigurationError({ code: "boundary-host-not-allowlisted", message: "External MySQL host is not explicitly allowlisted by its external-service boundary" })
   }
-  if (hostListAllows(boundary.blockedHosts ?? [], host, port)) throw new Error("External MySQL host is blocked by its external-service boundary")
-  if (boundary.writes !== "allowed-with-approval") throw new Error("External MySQL boundary does not permit managed writes")
-  if (policy.approvals !== "on-write" || !context.externalServiceWritesApproved) throw new Error("External MySQL managed writes were not explicitly approved")
+  if (hostListAllows(boundary.blockedHosts ?? [], host, port)) throw new ExternalMysqlConfigurationError({ code: "boundary-host-blocked", message: "External MySQL host is blocked by its external-service boundary" })
+  if (boundary.writes !== "allowed-with-approval") throw new ExternalMysqlConfigurationError({ code: "boundary-writes-not-permitted", message: "External MySQL boundary does not permit managed writes" })
+  if (policy.approvals !== "on-write" || !context.externalServiceWritesApproved) throw new ExternalMysqlConfigurationError({ code: "writes-not-approved", message: "External MySQL managed writes were not explicitly approved" })
 }
 
 function hostListAllows(allowedHosts: readonly string[], host: string, port: number): boolean {
@@ -1509,9 +1529,10 @@ function hostListAllows(allowedHosts: readonly string[], host: string, port: num
 }
 
 function configuredEnvironmentValue(name: string | undefined, environment: Record<string, string | undefined>, field: string, allowEmpty = false): string {
-  if (!name || !/^[A-Z_][A-Z0-9_]*$/.test(name)) throw new Error(`External MySQL ${field} must reference a runtime environment variable`)
+  // Only validated variable names may enter diagnostics; never include environment values.
+  if (!name || !/^[A-Z_][A-Z0-9_]*$/.test(name)) throw new ExternalMysqlConfigurationError({ code: "env-unavailable", field, message: `${field} must reference a runtime environment variable` })
   const value = environment[name]
-  if (value === undefined || (!allowEmpty && value.trim() === "")) throw new Error(`External MySQL ${field} environment variable is unavailable`)
+  if (value === undefined || (!allowEmpty && value.trim() === "")) throw new ExternalMysqlConfigurationError({ code: "env-unavailable", field, envName: name, message: `${field} ${name} environment variable is unavailable` })
   return value
 }
 
