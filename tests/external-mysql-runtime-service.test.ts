@@ -115,6 +115,62 @@ function fakeDependencies(handle?: (call: FakeCall, controller?: AbortController
   }
 }
 
+// Every preflight refusal must retain a stable, secret-free reason without connecting.
+type ProvisionOptions = NonNullable<Parameters<typeof provisionRuntimeServices>[1]>
+async function assertPreflightReason(
+  code: string,
+  message: string,
+  options: ProvisionOptions = {},
+  service = externalService,
+  environment: Record<string, string | undefined> = {},
+  details: Record<string, string> = {},
+): Promise<void> {
+  const fake = fakeDependencies()
+  Object.assign(fake.dependencies.environment!, environment)
+  await assert.rejects(provisionRuntimeServices([service], { dependencies: fake.dependencies, ...authorization, ...options }), (error: unknown) => {
+    assert.ok(error instanceof RuntimeServiceProvisionError)
+    const diagnostic = error.evidence[0]?.diagnostic
+    assert.equal(diagnostic?.code, "provision-failed")
+    assert.deepEqual(diagnostic?.reason, { code, message, ...details })
+    assert.equal(error.message, `Managed runtime service failed: external-db (${code}: ${message})`)
+    const serialized = JSON.stringify({ message: error.message, evidence: error.evidence })
+    for (const value of Object.values(fake.dependencies.environment!)) {
+      if (value) assert.equal(serialized.includes(value), false, "environment values must never enter diagnostics")
+    }
+    assert.equal(serialized.includes(adminPassword), false)
+    return true
+  })
+  assert.equal(fake.calls.length, 0)
+}
+
+for (const [field, envName] of Object.entries({ hostEnv: "MYSQL_ADMIN_HOST", usernameEnv: "MYSQL_ADMIN_USER", passwordEnv: "MYSQL_ADMIN_PASSWORD", portEnv: "MYSQL_ADMIN_PORT" })) {
+  await assertPreflightReason("env-unavailable", `${field} ${envName} environment variable is unavailable`, {}, externalService, { [envName]: undefined }, { field, envName })
+}
+for (const name of [undefined, "not-a-variable", adminPassword]) {
+  await assertPreflightReason("env-unavailable", "passwordEnv must reference a runtime environment variable", {}, {
+    ...externalService, configuration: { ...externalService.configuration, passwordEnv: name },
+  }, {}, { field: "passwordEnv" })
+}
+for (const envName of ["MYSQL_ADMIN_HOST", "MYSQL_ADMIN_USER", "MYSQL_ADMIN_PORT"]) {
+  const field = { MYSQL_ADMIN_HOST: "hostEnv", MYSQL_ADMIN_USER: "usernameEnv", MYSQL_ADMIN_PORT: "portEnv" }[envName]!
+  await assertPreflightReason("env-unavailable", `${field} ${envName} environment variable is unavailable`, {}, externalService, { [envName]: "   " }, { field, envName })
+}
+for (const port of ["not-a-port", "0", "65536", "3307.5"]) {
+  await assertPreflightReason("invalid-port", "External MySQL port environment value must be an integer between 1 and 65535", {}, externalService, { MYSQL_ADMIN_PORT: port })
+}
+for (const deniedPolicy of [undefined, { ...policy, network: "deny" as const }]) {
+  await assertPreflightReason("network-policy-denied", "External MySQL access is denied by runtime network policy", { policy: deniedPolicy })
+}
+await assertPreflightReason("network-policy-host-not-allowed", "External MySQL host is not allowed by runtime network policy", { policy: { ...policy, network: { allowHosts: [] } } })
+await assertPreflightReason("boundary-missing", "External MySQL external-service boundary is missing", { externalServices: [] })
+for (const allowedHosts of [undefined, [], ["other.internal"]]) {
+  await assertPreflightReason("boundary-host-not-allowlisted", "External MySQL host is not explicitly allowlisted by its external-service boundary", { externalServices: [{ ...externalServices[0]!, allowedHosts }] })
+}
+await assertPreflightReason("boundary-host-blocked", "External MySQL host is blocked by its external-service boundary", { externalServices: [{ ...externalServices[0]!, blockedHosts: ["database.internal"] }] })
+await assertPreflightReason("boundary-writes-not-permitted", "External MySQL boundary does not permit managed writes", { externalServices: [{ ...externalServices[0]!, writes: "forbidden" }] })
+await assertPreflightReason("writes-not-approved", "External MySQL managed writes were not explicitly approved", { externalServiceWritesApproved: false })
+await assertPreflightReason("writes-not-approved", "External MySQL managed writes were not explicitly approved", { policy: { ...policy, approvals: "never" } })
+
 const deniedPolicyFake = fakeDependencies()
 await assert.rejects(provisionRuntimeServices([externalService], { dependencies: deniedPolicyFake.dependencies, ...authorization, policy: { ...policy, network: "deny" } }), RuntimeServiceProvisionError)
 assert.equal(deniedPolicyFake.calls.length, 0, "denied network policy fails before connecting")
