@@ -315,7 +315,11 @@ export function composerManagedHostEnv(): Record<string, string> {
   const home = process.env.HOME || homedir()
   return {
     ...(home ? { HOME: home } : {}),
-    ...(process.env.COMPOSER_HOME ? { COMPOSER_HOME: process.env.COMPOSER_HOME } : home ? { COMPOSER_HOME: join(home, ".composer") } : {}),
+    // Let Composer resolve its HOME/XDG defaults unless the host overrides them.
+    ...Object.fromEntries(
+      ["COMPOSER_HOME", "COMPOSER_CACHE_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"]
+        .flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]]),
+    ),
     COMPOSER_MIRROR_PATH_REPOS: "1",
   }
 }
@@ -346,6 +350,14 @@ export const COMPOSER_SOURCE_PACKAGE_INSTALL_ARGS: readonly string[] = [
   "--no-plugins",
 ]
 
+const DEFAULT_COMPOSER_TIMEOUT_MS = 10 * 60_000
+
+function composerTimeoutMs(): number {
+  const value = process.env.WP_CODEBOX_COMPOSER_TIMEOUT_MS ?? ""
+  const timeoutMs = /^\d+$/.test(value) ? Number(value) : NaN
+  return Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_COMPOSER_TIMEOUT_MS
+}
+
 export function composerManagedHostCommandConfig(options: {
   cwd: string
   allowedCwdRoots: string[]
@@ -360,8 +372,8 @@ export function composerManagedHostCommandConfig(options: {
     cwd: options.cwd,
     env: composerManagedHostEnv(),
     allowedCwdRoots: options.allowedCwdRoots,
-    inheritedEnv: ["HOME", "COMPOSER_HOME"],
-    timeoutMs: options.timeoutMs,
+    inheritedEnv: ["HOME", "COMPOSER_HOME", "COMPOSER_CACHE_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"],
+    timeoutMs: options.timeoutMs ?? composerTimeoutMs(),
     maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024 * 10,
     label: options.label,
   }
