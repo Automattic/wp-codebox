@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { dirname, join, posix } from "node:path"
 import type { BrowserArtifact } from "./browser-artifacts.js"
 import { promoteBrowserMetricsToBenchResults } from "./browser-metrics.js"
 import { writePluginCheckArtifacts, writeThemeCheckArtifacts, type PluginCheckArtifact, type ThemeCheckArtifact } from "./check-artifacts.js"
@@ -976,7 +976,7 @@ export async function runPhpunitCommand({
     projectAutoloadFile: argValue(args, "project-autoload-file")?.trim() || "",
     testsDir: argValue(args, "tests-dir")?.trim() || "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
     testRoot: argValue(args, "test-root")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/tests`,
-    phpunitXml: phpunitXmlArg?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/phpunit.xml.dist`,
+    phpunitXml: posix.resolve(`/wordpress/wp-content/plugins/${pluginSlug}`, phpunitXmlArg?.trim() || "phpunit.xml.dist"),
     phpunitXmlIsDefault: phpunitXmlArg === undefined || booleanArg(args, "phpunit-xml-default"),
     selectedTestFile,
     changedTestFiles,

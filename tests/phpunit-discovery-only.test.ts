@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.js"
@@ -111,6 +111,64 @@ test("discovery-only returns its schema-bound result directly", async () => {
     spec: { command: "wordpress.phpunit", args: ["plugin-slug=fixture", "discovery-only=1"] },
   })
   assert.deepEqual(JSON.parse(output), payload)
+})
+
+test("relative managed config discovery matches absolute sandbox paths (issue #2601)", async () => {
+  const pluginRoot = "/wordpress/wp-content/plugins/fixture"
+  const configPath = `${pluginRoot}/phpunit-managed.xml.dist`
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-2601-"))
+  try {
+    mkdirSync(join(tempDir, "tests", "Unit"), { recursive: true })
+    writeFileSync(join(tempDir, "tests", "Unit", "FixtureTest.php"), "<?php\n")
+    writeFileSync(join(tempDir, "phpunit-managed.xml.dist"),
+      '<phpunit><testsuites><testsuite name="managed"><directory>./tests/Unit</directory></testsuite></testsuites></phpunit>')
+
+    const generated: string[] = []
+    const results: unknown[] = []
+    for (const config of ["phpunit-managed.xml.dist", configPath]) {
+      let runtimeOutput = ""
+      const result = await runPhpunitCommand({
+        artifactRoot: "/tmp/artifacts",
+        mounts: [],
+        runPlaygroundCommand: async (_command, _server, input) => {
+          const code = input.code ?? ""
+          generated.push(code)
+          assert.ok(code.includes(JSON.stringify(configPath)), "runner must canonicalize the config before generating PHP")
+          const start = code.indexOf("if ($discovery_only) {")
+          const end = code.indexOf("if (!is_array($wp_config_defines))", start)
+          assert.ok(start >= 0 && end > start)
+          // Execute the real discovery block on the host, mapping only the VFS root.
+          const scriptPath = join(tempDir, "discover.php")
+          writeFileSync(scriptPath, `<?php
+function pg_log($message) { echo $message, "\\n"; }
+function pg_stage_begin($stage) {}
+function pg_stage_ok($stage) {}
+function pg_stage_fail($stage, Throwable $e) { echo 'STAGE_FAIL:', $e->getMessage(), "\\n"; }
+${extractPhpFunction(code, "wp_codebox_phpunit_parse_config")}
+${extractPhpFunction(code, "wp_codebox_phpunit_discover")}
+$discovery_only = true;
+$plugin_slug = 'fixture';
+$test_root = ${phpString(join(tempDir, "tests"))};
+$selected_testsuites = array();
+${code.slice(start, end).replaceAll(pluginRoot, tempDir)}
+`)
+          runtimeOutput = execFileSync("php", [scriptPath], { encoding: "utf8" }).replaceAll(tempDir, pluginRoot)
+          return { exitCode: 0, errors: "", text: "" }
+        },
+        runtimeSpec: wordpressRuntimeSpec({ commands: ["wordpress.phpunit"] }),
+        server: { playground: { readFileAsText: async () => runtimeOutput } } as never,
+        spec: { command: "wordpress.phpunit", args: ["plugin-slug=fixture", "discovery-only=true", `phpunit-xml=${config}`] },
+      })
+      const payload = JSON.parse(result as string)
+      assert.equal(payload.phpunit_xml, configPath)
+      assert.deepEqual(payload.files, [`${pluginRoot}/./tests/Unit/FixtureTest.php`])
+      results.push(payload)
+    }
+    assert.equal(generated[0], generated[1], "discovery and execution must receive identical canonical options")
+    assert.deepEqual(results[0], results[1])
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test("recipe setup uses canonical boolean parsing and rejects mixed workflows", () => {
