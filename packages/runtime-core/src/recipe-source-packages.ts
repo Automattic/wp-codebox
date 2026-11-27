@@ -315,7 +315,11 @@ export function composerManagedHostEnv(): Record<string, string> {
   const home = process.env.HOME || homedir()
   return {
     ...(home ? { HOME: home } : {}),
-    ...(process.env.COMPOSER_HOME ? { COMPOSER_HOME: process.env.COMPOSER_HOME } : home ? { COMPOSER_HOME: join(home, ".composer") } : {}),
+    // Let Composer resolve its HOME/XDG defaults unless the host overrides them.
+    ...Object.fromEntries(
+      ["COMPOSER_HOME", "COMPOSER_CACHE_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"]
+        .flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]]),
+    ),
     COMPOSER_MIRROR_PATH_REPOS: "1",
   }
 }
@@ -368,7 +372,7 @@ export function composerManagedHostCommandConfig(options: {
     cwd: options.cwd,
     env: composerManagedHostEnv(),
     allowedCwdRoots: options.allowedCwdRoots,
-    inheritedEnv: ["HOME", "COMPOSER_HOME"],
+    inheritedEnv: ["HOME", "COMPOSER_HOME", "COMPOSER_CACHE_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"],
     timeoutMs: options.timeoutMs ?? composerTimeoutMs(),
     maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024 * 10,
     label: options.label,

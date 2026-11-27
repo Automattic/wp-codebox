@@ -6,6 +6,7 @@ import {
   COMPOSER_SOURCE_PACKAGE_INSTALL_ARGS,
   compileRecipeTemplate,
   composerManagedHostCommandConfig,
+  composerManagedHostEnv,
   fixtureImportDeterministicIdPlan,
   prepareRecipeSourcePackageSync,
   sourcePackagePathAllowed,
@@ -28,8 +29,37 @@ assert.equal(template.recipe.artifacts?.paths?.[0]?.path, "/workspace/fixtures/p
 
 const composerPolicy = composerManagedHostCommandConfig({ cwd: process.cwd(), allowedCwdRoots: [process.cwd()], label: "composer policy test" })
 assert.equal(composerPolicy.command, "composer")
-assert.deepEqual(composerPolicy.inheritedEnv, ["HOME", "COMPOSER_HOME"])
+assert.deepEqual(composerPolicy.inheritedEnv, ["HOME", "COMPOSER_HOME", "COMPOSER_CACHE_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"])
 assert.equal(composerPolicy.allowedCwdRoots?.[0], process.cwd())
+
+const composerEnvKeys = ["HOME", "COMPOSER_HOME", "COMPOSER_CACHE_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"]
+const originalComposerEnv = Object.fromEntries(composerEnvKeys.map((key) => [key, process.env[key]]))
+try {
+  for (const key of composerEnvKeys) delete process.env[key]
+  process.env.HOME = "/isolated-home"
+  assert.deepEqual(composerManagedHostEnv(), {
+    HOME: "/isolated-home",
+    COMPOSER_MIRROR_PATH_REPOS: "1",
+  }, "Composer must resolve its own defaults without a synthesized COMPOSER_HOME")
+
+  for (const key of composerEnvKeys.slice(1)) {
+    process.env[key] = `/host-overrides/${key}`
+  }
+  const expectedEnv = {
+    ...Object.fromEntries(composerEnvKeys.map((key) => [key, process.env[key]])),
+    COMPOSER_MIRROR_PATH_REPOS: "1",
+  }
+  assert.deepEqual(composerManagedHostEnv(), expectedEnv, "explicit Composer and XDG directories must pass through")
+  assert.deepEqual(composerManagedHostCommandConfig({
+    cwd: process.cwd(), allowedCwdRoots: [process.cwd()], label: "composer environment test",
+  }).env, expectedEnv, "host commands must receive the Composer and XDG overrides")
+} finally {
+  for (const key of composerEnvKeys) {
+    const original = originalComposerEnv[key]
+    if (original === undefined) delete process.env[key]
+    else process.env[key] = original
+  }
+}
 
 // Hydration produces an autoloader; it must never execute package-supplied
 // code, and must not depend on the host's `allow-plugins` configuration.
