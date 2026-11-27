@@ -5,10 +5,41 @@ import { join } from "node:path"
 import { promisify } from "node:util"
 
 import { cleanupRecipePreparedSources, materializeComposerPathRepositoryPackages, prepareRecipeExtraPlugins } from "../packages/cli/src/recipe-sources.js"
-import { assertWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "../packages/runtime-core/src/index.js"
+import { assertWorkspaceRecipeJsonSchema, composerManagedHostCommandConfig, type WorkspaceRecipe } from "../packages/runtime-core/src/index.js"
 import { withTempDir } from "../scripts/test-kit.js"
 
 const execFile = promisify(execFileCallback)
+
+// Extra-plugin preparation and source-package hydration share this config.
+const originalComposerTimeout = process.env.WP_CODEBOX_COMPOSER_TIMEOUT_MS
+const composerPreparationOptions = {
+  cwd: process.cwd(),
+  allowedCwdRoots: [process.cwd()],
+  label: "prepare Composer autoload for recipe extra plugin",
+}
+try {
+  delete process.env.WP_CODEBOX_COMPOSER_TIMEOUT_MS
+  assert.equal(composerManagedHostCommandConfig(composerPreparationOptions).timeoutMs, 10 * 60_000,
+    "recipe extra-plugin Composer preparation must default to ten minutes")
+
+  process.env.WP_CODEBOX_COMPOSER_TIMEOUT_MS = "900000"
+  assert.equal(composerManagedHostCommandConfig(composerPreparationOptions).timeoutMs, 900_000,
+    "operators must be able to override the Composer budget")
+  assert.equal(composerManagedHostCommandConfig({ ...composerPreparationOptions, timeoutMs: 120_000 }).timeoutMs, 120_000,
+    "an explicit caller timeout must retain precedence")
+
+  for (const invalid of ["", "0", "-1", "1.5", "60000ms", "1e5", "Infinity", "NaN", "9007199254740992"]) {
+    process.env.WP_CODEBOX_COMPOSER_TIMEOUT_MS = invalid
+    assert.equal(composerManagedHostCommandConfig(composerPreparationOptions).timeoutMs, 10 * 60_000,
+      `invalid Composer timeout ${JSON.stringify(invalid)} must use the default`)
+  }
+} finally {
+  if (originalComposerTimeout === undefined) {
+    delete process.env.WP_CODEBOX_COMPOSER_TIMEOUT_MS
+  } else {
+    process.env.WP_CODEBOX_COMPOSER_TIMEOUT_MS = originalComposerTimeout
+  }
+}
 
 async function pathExists(path: string): Promise<boolean> {
   try {

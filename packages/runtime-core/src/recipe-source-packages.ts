@@ -346,6 +346,14 @@ export const COMPOSER_SOURCE_PACKAGE_INSTALL_ARGS: readonly string[] = [
   "--no-plugins",
 ]
 
+const DEFAULT_COMPOSER_TIMEOUT_MS = 10 * 60_000
+
+function composerTimeoutMs(): number {
+  const value = process.env.WP_CODEBOX_COMPOSER_TIMEOUT_MS ?? ""
+  const timeoutMs = /^\d+$/.test(value) ? Number(value) : NaN
+  return Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_COMPOSER_TIMEOUT_MS
+}
+
 export function composerManagedHostCommandConfig(options: {
   cwd: string
   allowedCwdRoots: string[]
@@ -361,7 +369,7 @@ export function composerManagedHostCommandConfig(options: {
     env: composerManagedHostEnv(),
     allowedCwdRoots: options.allowedCwdRoots,
     inheritedEnv: ["HOME", "COMPOSER_HOME"],
-    timeoutMs: options.timeoutMs,
+    timeoutMs: options.timeoutMs ?? composerTimeoutMs(),
     maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024 * 10,
     label: options.label,
   }
